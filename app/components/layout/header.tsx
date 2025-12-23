@@ -2,6 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { Button } from '../ui/button';
 
@@ -19,10 +20,17 @@ export const Header: React.FC = () => {
     <header className="sticky top-0 z-50 bg-[#0E0F12]/80 backdrop-blur-md border-b border-[#23262F] px-4 py-4 sm:px-8">
       <div className="max-w-7xl mx-auto flex items-center justify-between">
         <Link href="/" className="flex items-center gap-2 group">
-          <div className="w-8 h-8 bg-[#F26B3A] flex items-center justify-center font-bold text-[#0E0F12] text-xl">P</div>
-          <span className="text-xl font-bold tracking-tighter uppercase group-hover:text-[#F26B3A] transition-colors">Pact</span>
+          <Image 
+            src="/logo.png" 
+            alt="Pact Logo" 
+            width={32} 
+            height={32}
+            className="object-contain w-12 h-12 shrink-0"
+            priority
+            unoptimized
+          />
+          {/* <span className="text-xl font-bold tracking-tighter uppercase group-hover:text-[#F26B3A] transition-colors">Pact</span> */}
         </Link>
-
         <nav className="hidden md:flex items-center gap-8">
           {navLinks.map((link) => (
             <Link
