@@ -8,6 +8,8 @@ import { Card } from "../components/ui/card";
 import { useWallet } from "../contexts/WalletContext";
 import {
   submitCreatePactTransaction,
+  initializeProtocol,
+  isProtocolInitialized,
   CreatePactParams,
 } from "../lib/pactTransactions";
 
@@ -41,6 +43,75 @@ export default function CreatePactPage() {
     setError(null);
 
     try {
+      // Always try to initialize if user is deployer (idempotent - safe to call multiple times)
+      // The deployer address is the contract address itself
+      const deployerAddress =
+        "0x0ded5b8d5d47739ce0022d24bd2d20f32eb97dcdc1dd2db583f4cc5e608c4794";
+
+      if (address.toLowerCase() === deployerAddress.toLowerCase()) {
+        // User is the deployer, try to initialize (safe to call even if already initialized)
+        console.log(
+          "[Create Pact] User is deployer, ensuring protocol is initialized..."
+        );
+        console.log(
+          "[Create Pact] Address match:",
+          address.toLowerCase(),
+          "===",
+          deployerAddress.toLowerCase()
+        );
+
+        let initializationSucceeded = false;
+        try {
+          const initTxHash = await initializeProtocol(
+            address,
+            signAndSubmitTransaction
+          );
+          console.log(
+            "[Create Pact] Initialize transaction submitted:",
+            initTxHash
+          );
+
+          // Wait for initialization to complete
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+
+          console.log("[Create Pact] Protocol initialization completed");
+          initializationSucceeded = true;
+        } catch (initError: any) {
+          // If initialization fails with "already initialized", that's fine
+          const errorMsg = initError?.message || initError?.toString() || "";
+          console.log("[Create Pact] Initialize error:", errorMsg);
+
+          if (
+            errorMsg.includes("E_ALREADY_INITIALIZED") ||
+            errorMsg.includes("0x60002") ||
+            errorMsg.includes("60002")
+          ) {
+            console.log("[Create Pact] Protocol already initialized");
+            initializationSucceeded = true;
+          } else {
+            // For other errors, throw - don't continue if initialization failed
+            throw new Error(`Failed to initialize protocol: ${errorMsg}`);
+          }
+        }
+
+        if (!initializationSucceeded) {
+          throw new Error("Protocol initialization failed. Please try again.");
+        }
+      } else {
+        // Not deployer - check if initialized
+        console.log(
+          "[Create Pact] User is not deployer, checking if protocol is initialized..."
+        );
+        const initialized = await isProtocolInitialized();
+        if (!initialized) {
+          throw new Error(
+            `Protocol not initialized. Please contact the deployer (${deployerAddress.slice(
+              0,
+              6
+            )}...${deployerAddress.slice(-4)}) to initialize the protocol.`
+          );
+        }
+      }
       // Convert deadline to Unix timestamp (seconds)
       const deadlineDate = new Date(formData.deadline);
       const deadlineSeconds = Math.floor(deadlineDate.getTime() / 1000);

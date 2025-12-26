@@ -4,10 +4,10 @@ version = "1.0.0"
 authors = []
 
 [addresses]
-pact_addr = "_"
+pact_addr = "0x0ded5b8d5d47739ce0022d24bd2d20f32eb97dcdc1dd2db583f4cc5e608c4794"
 
 [dev-addresses]
-pact_addr = "0xCAFE"
+pact_addr = "0x0ded5b8d5d47739ce0022d24bd2d20f32eb97dcdc1dd2db583f4cc5e608c4794"
 
 [dependencies.AptosFramework]
 git = "https://github.com/movementlabsxyz/aptos-core.git"
