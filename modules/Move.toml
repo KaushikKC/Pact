@@ -1,11 +1,13 @@
 [package]
-name = "modules"
+name = "pact"
 version = "1.0.0"
 authors = []
 
 [addresses]
+pact_addr = "_"
 
 [dev-addresses]
+pact_addr = "0xCAFE"
 
 [dependencies.AptosFramework]
 git = "https://github.com/movementlabsxyz/aptos-core.git"
