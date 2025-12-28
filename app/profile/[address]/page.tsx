@@ -7,6 +7,7 @@ import { motion } from "framer-motion";
 import { Card } from "../../components/ui/card";
 import { PactStatusBadge } from "../../components/pact/pact-status-badge";
 import { Button } from "../../components/ui/button";
+import { WatchlistButton } from "../../components/pact/watchlist-button";
 import { fetchUserPacts, getUserStats } from "../../lib/pactTransactions";
 
 type PactStatus = "ACTIVE" | "PASSED" | "FAILED";
@@ -149,16 +150,21 @@ export default function UserProfilePage() {
               {address}
             </p>
           </div>
-          <div className="text-right">
-            <div className={`text-2xl font-bold ${reputationBadge.color}`}>
-              {stats.reputationScore}
+          <div className="text-right space-y-3">
+            <div>
+              <div className={`text-2xl font-bold ${reputationBadge.color}`}>
+                {stats.reputationScore}
+              </div>
+              <div className="text-xs uppercase tracking-widest text-[#8E9094]">
+                Reputation
+              </div>
+              <div
+                className={`text-sm font-bold mt-1 ${reputationBadge.color}`}
+              >
+                {reputationBadge.label}
+              </div>
             </div>
-            <div className="text-xs uppercase tracking-widest text-[#8E9094]">
-              Reputation
-            </div>
-            <div className={`text-sm font-bold mt-1 ${reputationBadge.color}`}>
-              {reputationBadge.label}
-            </div>
+            <WatchlistButton address={address} />
           </div>
         </div>
 

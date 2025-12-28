@@ -582,6 +582,46 @@ export const fetchAllPacts = async (): Promise<any[]> => {
 };
 
 /**
+ * Get trending pacts (sorted by stake amount, recency, and activity)
+ */
+export const getTrendingPacts = async (limit: number = 10): Promise<any[]> => {
+  try {
+    const allPacts = await fetchAllPacts();
+    const now = Math.floor(Date.now() / 1000);
+
+    // Score pacts based on:
+    // 1. Stake amount (higher = more trending)
+    // 2. Recency (newer = more trending)
+    // 3. Time until deadline (closer = more trending)
+    const scoredPacts = allPacts
+      .filter((pact) => pact.status === 0) // Only active pacts
+      .map((pact) => {
+        const daysUntilDeadline = (pact.deadline - now) / (24 * 60 * 60);
+        const recencyScore = Math.max(
+          0,
+          30 - (now - pact.deadline + (pact.deadline - now)) / (24 * 60 * 60)
+        );
+        const stakeScore = Math.log10(pact.stakeAmount + 1) / 10; // Normalize stake
+        const urgencyScore =
+          daysUntilDeadline > 0 ? 1 / (1 + daysUntilDeadline / 7) : 0; // Higher if deadline is soon
+
+        return {
+          ...pact,
+          trendingScore:
+            stakeScore * 0.4 + recencyScore * 0.3 + urgencyScore * 0.3,
+        };
+      })
+      .sort((a, b) => b.trendingScore - a.trendingScore)
+      .slice(0, limit);
+
+    return scoredPacts;
+  } catch (error) {
+    console.error("Error fetching trending pacts:", error);
+    return [];
+  }
+};
+
+/**
  * Calculate user statistics from their pacts
  */
 export const getUserStats = async (

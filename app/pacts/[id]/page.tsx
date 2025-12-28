@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { Button } from "../../components/ui/button";
 import { PactStatusBadge } from "../../components/pact/pact-status-badge";
 import { Card } from "../../components/ui/card";
+import { SharePactButton } from "../../components/pact/share-pact-button";
 import { fetchPact } from "../../lib/pactTransactions";
 
 type PactStatus = "ACTIVE" | "PASSED" | "FAILED";
@@ -268,18 +269,16 @@ export default function PactDetailPage() {
                 View Creator Profile
               </Button>
             </Link>
-            <Button
-              variant="outline"
-              className="w-full"
-              onClick={() => {
-                const url = `${window.location.origin}/pacts/${id}`;
-                navigator.clipboard.writeText(url);
-                // You could add a toast notification here
-                alert("Pact link copied to clipboard!");
-              }}
-            >
-              Share Pact
-            </Button>
+            <SharePactButton
+              pactId={id}
+              pactStatement={`Hold ≥ ${(
+                pact.startBalance / 100_000_000
+              ).toFixed(2)} MOVE until ${new Date(
+                pact.deadline * 1000
+              ).toLocaleDateString()}`}
+              creatorAddress={pact.creator}
+              stakeAmount={pact.stakeAmount}
+            />
           </div>
 
           {pact.status === "ACTIVE" && !isDeadlinePassed && (

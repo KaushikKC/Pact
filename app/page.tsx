@@ -1,11 +1,12 @@
-'use client';
+"use client";
 
-import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import Link from 'next/link';
-import { Button } from './components/ui/button';
-import { INTENT_EXAMPLES } from './constants';
-import TextType from './components/ui/TextType';
+import React, { useState, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import Link from "next/link";
+import { Button } from "./components/ui/button";
+import { INTENT_EXAMPLES } from "./constants";
+import TextType from "./components/ui/TextType";
+import { TrendingPacts } from "./components/pact/trending-pacts";
 
 export default function LandingPage() {
   const [exampleIndex, setExampleIndex] = useState(0);
@@ -21,7 +22,13 @@ export default function LandingPage() {
     <div className="min-h-[90vh] flex flex-col items-center justify-center text-center px-6 py-16 relative overflow-hidden">
       {/* Background patterns */}
       <div className="absolute inset-0 z-0 pointer-events-none opacity-20">
-        <div className="absolute top-0 left-0 w-full h-full" style={{ backgroundImage: 'radial-gradient(#23262F 1px, transparent 1px)', backgroundSize: '40px 40px' }}></div>
+        <div
+          className="absolute top-0 left-0 w-full h-full"
+          style={{
+            backgroundImage: "radial-gradient(#23262F 1px, transparent 1px)",
+            backgroundSize: "40px 40px",
+          }}
+        ></div>
       </div>
 
       <motion.div
@@ -41,8 +48,8 @@ export default function LandingPage() {
           textColors={["inherit", "#F26B3A"]}
         />
         <p className="text-xl md:text-2xl text-[#8E9094] max-w-2xl mx-auto mb-12 font-space">
-          Intent-Based Finance for the high-integrity builder. 
-          Stake assets on your promises. Verifiable by anyone. Settled by consensus.
+          Intent-Based Finance for the high-integrity builder. Stake assets on
+          your promises. Verifiable by anyone. Settled by consensus.
         </p>
 
         <div className="h-24 mb-6 flex items-center justify-center">
@@ -62,15 +69,22 @@ export default function LandingPage() {
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-6">
           <Link href="/create">
-            <Button size="lg" className="w-full sm:w-auto">Create Pact</Button>
+            <Button size="lg" className="w-full sm:w-auto">
+              Create Pact
+            </Button>
           </Link>
           <Link href="/leaderboard">
-            <Button variant="outline" size="lg" className="w-full sm:w-auto">View Community Pacts</Button>
+            <Button variant="outline" size="lg" className="w-full sm:w-auto">
+              View Community Pacts
+            </Button>
           </Link>
         </div>
       </motion.div>
 
-      
+      {/* Trending Pacts Section */}
+      <div className="z-10 max-w-6xl mx-auto mt-24 px-6">
+        <TrendingPacts />
+      </div>
     </div>
   );
 }

@@ -6,7 +6,12 @@ import { motion } from "framer-motion";
 import { Card } from "../components/ui/card";
 import { PactStatusBadge } from "../components/pact/pact-status-badge";
 import { useWallet } from "../contexts/WalletContext";
-import { fetchAllPacts, getProtocolStats } from "../lib/pactTransactions";
+import {
+  fetchAllPacts,
+  getProtocolStats,
+  getUserStats,
+} from "../lib/pactTransactions";
+import { getWatchlist } from "../lib/watchlist";
 
 type PactStatus = "ACTIVE" | "PASSED" | "FAILED";
 
@@ -21,9 +26,13 @@ interface Pact {
   creator: string;
 }
 
+type ReputationFilter = "ALL" | "HIGH" | "MEDIUM" | "LOW";
+type ViewFilter = "ALL" | "WATCHLIST";
+
 export default function LeaderboardPage() {
   const { address, isConnected } = useWallet();
   const [pacts, setPacts] = useState<Pact[]>([]);
+  const [allPacts, setAllPacts] = useState<Pact[]>([]);
   const [stats, setStats] = useState({
     totalPacts: 0,
     protocolFees: 0,
@@ -31,6 +40,12 @@ export default function LeaderboardPage() {
   });
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reputationFilter, setReputationFilter] =
+    useState<ReputationFilter>("ALL");
+  const [viewFilter, setViewFilter] = useState<ViewFilter>("ALL");
+  const [userReputations, setUserReputations] = useState<
+    Record<string, number>
+  >({});
 
   useEffect(() => {
     const loadData = async () => {
@@ -69,7 +84,26 @@ export default function LeaderboardPage() {
 
         // Sort by stake amount (descending)
         transformedPacts.sort((a, b) => b.stakeAmount - a.stakeAmount);
+        setAllPacts(transformedPacts);
         setPacts(transformedPacts);
+
+        // Load reputation scores for all unique creators
+        const uniqueCreators = Array.from(
+          new Set(transformedPacts.map((p) => p.creator))
+        );
+        const reputationMap: Record<string, number> = {};
+        await Promise.all(
+          uniqueCreators.map(async (creator) => {
+            try {
+              const userStats = await getUserStats(creator);
+              reputationMap[creator] = userStats.reputationScore;
+            } catch (error) {
+              console.error(`Error fetching reputation for ${creator}:`, error);
+              reputationMap[creator] = 0;
+            }
+          })
+        );
+        setUserReputations(reputationMap);
       } catch (err: any) {
         console.error("Error loading leaderboard data:", err);
         setError(err?.message || "Failed to load leaderboard data");
@@ -161,9 +195,80 @@ export default function LeaderboardPage() {
 
       {!isLoading && !error && (
         <div className="space-y-6">
-          <h3 className="text-xl font-bold uppercase tracking-tight mb-6">
-            All Community Pacts
-          </h3>
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-xl font-bold uppercase tracking-tight">
+              All Community Pacts
+            </h3>
+            <div className="flex gap-2">
+              {/* View Filter */}
+              <div className="flex gap-1 bg-[#15171C] p-1 border border-[#23262F]">
+                <button
+                  onClick={() => setViewFilter("ALL")}
+                  className={`px-3 py-1 text-[10px] uppercase font-bold tracking-widest transition-colors ${
+                    viewFilter === "ALL"
+                      ? "bg-[#F26B3A] text-[#0E0F12]"
+                      : "text-[#8E9094] hover:text-white"
+                  }`}
+                >
+                  All
+                </button>
+                <button
+                  onClick={() => setViewFilter("WATCHLIST")}
+                  className={`px-3 py-1 text-[10px] uppercase font-bold tracking-widest transition-colors ${
+                    viewFilter === "WATCHLIST"
+                      ? "bg-[#F26B3A] text-[#0E0F12]"
+                      : "text-[#8E9094] hover:text-white"
+                  }`}
+                >
+                  Watchlist
+                </button>
+              </div>
+
+              {/* Reputation Filter */}
+              <div className="flex gap-1 bg-[#15171C] p-1 border border-[#23262F]">
+                <button
+                  onClick={() => setReputationFilter("ALL")}
+                  className={`px-3 py-1 text-[10px] uppercase font-bold tracking-widest transition-colors ${
+                    reputationFilter === "ALL"
+                      ? "bg-[#F26B3A] text-[#0E0F12]"
+                      : "text-[#8E9094] hover:text-white"
+                  }`}
+                >
+                  All
+                </button>
+                <button
+                  onClick={() => setReputationFilter("HIGH")}
+                  className={`px-3 py-1 text-[10px] uppercase font-bold tracking-widest transition-colors ${
+                    reputationFilter === "HIGH"
+                      ? "bg-[#3FB950] text-[#0E0F12]"
+                      : "text-[#8E9094] hover:text-white"
+                  }`}
+                >
+                  High (70+)
+                </button>
+                <button
+                  onClick={() => setReputationFilter("MEDIUM")}
+                  className={`px-3 py-1 text-[10px] uppercase font-bold tracking-widest transition-colors ${
+                    reputationFilter === "MEDIUM"
+                      ? "bg-[#4FD1C5] text-[#0E0F12]"
+                      : "text-[#8E9094] hover:text-white"
+                  }`}
+                >
+                  Med (40-69)
+                </button>
+                <button
+                  onClick={() => setReputationFilter("LOW")}
+                  className={`px-3 py-1 text-[10px] uppercase font-bold tracking-widest transition-colors ${
+                    reputationFilter === "LOW"
+                      ? "bg-[#F26B3A] text-[#0E0F12]"
+                      : "text-[#8E9094] hover:text-white"
+                  }`}
+                >
+                  Low (&lt;40)
+                </button>
+              </div>
+            </div>
+          </div>
 
           {isConnected && pacts.length === 0 && (
             <div className="py-12 text-center border border-dashed border-[#23262F]">
@@ -197,9 +302,17 @@ export default function LeaderboardPage() {
                         <div className="w-6 h-6 bg-[#23262F] flex items-center justify-center text-[10px] font-bold">
                           {pact.creator.slice(0, 2).toUpperCase()}
                         </div>
-                        <span className="text-xs font-mono">
-                          {pact.creator.slice(0, 6)}...{pact.creator.slice(-4)}
-                        </span>
+                        <div className="flex flex-col">
+                          <span className="text-xs font-mono">
+                            {pact.creator.slice(0, 6)}...
+                            {pact.creator.slice(-4)}
+                          </span>
+                          {userReputations[pact.creator] !== undefined && (
+                            <span className="text-[8px] text-[#8E9094]">
+                              Rep: {userReputations[pact.creator].toFixed(0)}
+                            </span>
+                          )}
+                        </div>
                       </Link>
                     </div>
                     <div className="col-span-1 md:col-span-3">
