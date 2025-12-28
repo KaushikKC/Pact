@@ -12,12 +12,22 @@ export const Header: React.FC = () => {
   const pathname = usePathname();
   const { address, isConnected, isLoading, disconnect } = useWallet();
 
-  const navLinks = [
+  const baseNavLinks = [
     { name: "Leaderboard", path: "/leaderboard" },
     { name: "My Pacts", path: "/pacts" },
     { name: "Resolve", path: "/resolve" },
     { name: "Create Pact", path: "/create" },
   ];
+
+  // If user is connected, add profile link
+  const navLinks =
+    isConnected && address
+      ? [
+          baseNavLinks[0],
+          { name: "Profile", path: `/profile/${address}` },
+          ...baseNavLinks.slice(1),
+        ]
+      : baseNavLinks;
 
   const formatAddress = (addr: string | null | undefined) => {
     if (!addr || typeof addr !== "string") {

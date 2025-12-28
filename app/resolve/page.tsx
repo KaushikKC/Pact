@@ -201,8 +201,8 @@ function ResolvePactPageContent() {
                   </span>
                 </div>
                 <p className="font-caveat text-xl text-[#4FD1C5]">
-                  &quot;Hold until{" "}
-                  {new Date(p.deadline * 1000).toLocaleDateString()}&quot;
+                  &quot;Hold ≥ {(p.startBalance / 100_000_000).toFixed(2)} MOVE
+                  until {new Date(p.deadline * 1000).toLocaleDateString()}&quot;
                 </p>
                 <p className="text-xs text-[#8E9094] mt-2">
                   Deadline: {new Date(p.deadline * 1000).toLocaleString()}
@@ -300,16 +300,17 @@ function ResolvePactPageContent() {
                   </h4>
                   <div className="space-y-4 text-sm text-[#8E9094]">
                     <div className="flex justify-between py-2 border-b border-[#23262F]">
-                      <span>Start Balance:</span>
+                      <span>Minimum Balance (Committed):</span>
                       <span className="text-white">
-                        {selectedPact.startBalance}
+                        {(selectedPact.startBalance / 100_000_000).toFixed(2)}{" "}
+                        MOVE
                       </span>
                     </div>
                     <div className="flex justify-between py-2 border-b border-[#23262F]">
                       <span>Current Balance:</span>
                       <span className="text-white">
                         {currentBalance !== null
-                          ? currentBalance
+                          ? `${(currentBalance / 100_000_000).toFixed(2)} MOVE`
                           : "Loading..."}
                       </span>
                     </div>
@@ -329,14 +330,19 @@ function ResolvePactPageContent() {
                     </div>
                     <div className="flex justify-between py-2">
                       <span>Resolution Rule:</span>
-                      <span className="text-[#4FD1C5]">
+                      <span className="text-[#4FD1C5] font-bold">
                         {currentBalance !== null &&
                         selectedPact.startBalance !== null
                           ? currentBalance >= selectedPact.startBalance
-                            ? "PASS ✓"
-                            : "FAIL ✗"
+                            ? "PASS ✓ (Balance ≥ Minimum)"
+                            : "FAIL ✗ (Balance < Minimum)"
                           : "Pending"}
                       </span>
+                    </div>
+                    <div className="mt-2 p-2 bg-[#23262F] rounded text-xs text-[#8E9094]">
+                      <strong>Rule:</strong> current_balance ≥{" "}
+                      {(selectedPact.startBalance / 100_000_000).toFixed(2)}{" "}
+                      MOVE = PASS
                     </div>
                   </div>
                 </Card>

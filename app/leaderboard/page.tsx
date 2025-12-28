@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import Link from "next/link";
 import { motion } from "framer-motion";
 import { Card } from "../components/ui/card";
 import { PactStatusBadge } from "../components/pact/pact-status-badge";
@@ -189,19 +190,26 @@ export default function LeaderboardPage() {
                     className="grid grid-cols-1 md:grid-cols-6 p-4 items-center gap-4 hover:bg-[#15171C] transition-colors"
                   >
                     <div className="col-span-1 flex items-center gap-2">
-                      <div className="w-6 h-6 bg-[#23262F] flex items-center justify-center text-[10px] font-bold">
-                        {pact.creator.slice(0, 2).toUpperCase()}
-                      </div>
-                      <span className="text-xs font-mono">
-                        {pact.creator.slice(0, 6)}...{pact.creator.slice(-4)}
-                      </span>
+                      <Link
+                        href={`/profile/${pact.creator}`}
+                        className="flex items-center gap-2 hover:text-[#F26B3A] transition-colors"
+                      >
+                        <div className="w-6 h-6 bg-[#23262F] flex items-center justify-center text-[10px] font-bold">
+                          {pact.creator.slice(0, 2).toUpperCase()}
+                        </div>
+                        <span className="text-xs font-mono">
+                          {pact.creator.slice(0, 6)}...{pact.creator.slice(-4)}
+                        </span>
+                      </Link>
                     </div>
                     <div className="col-span-1 md:col-span-3">
                       <span className="md:hidden text-[8px] uppercase font-bold text-[#8E9094] block mb-1">
                         Intent
                       </span>
                       <p className="font-caveat text-lg text-[#4FD1C5] truncate">
-                        &quot;Hold until{" "}
+                        &quot;Hold ≥{" "}
+                        {(pact.startBalance / 100_000_000).toFixed(2)} MOVE
+                        until{" "}
                         {new Date(pact.deadline * 1000).toLocaleDateString()}
                         &quot;
                       </p>

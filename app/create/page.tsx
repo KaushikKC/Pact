@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { Button } from "../components/ui/button";
@@ -11,9 +11,10 @@ import {
   initializeProtocol,
   isProtocolInitialized,
   CreatePactParams,
+  getCurrentBalance,
 } from "../lib/pactTransactions";
 
-type Step = 1 | 2 | 3 | 4;
+type Step = 1 | 2 | 3 | 4 | 5;
 
 export default function CreatePactPage() {
   const router = useRouter();
@@ -22,13 +23,13 @@ export default function CreatePactPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [formData, setFormData] = useState({
-    type: "HOLD" as "HOLD" | "SHIP" | "ATTEND",
-    statement: "",
-    stake: 0,
-    token: "MOVE",
-    deadline: "",
-    tokenAddress: "", // Address of token to track (for MVP: can be user's address or a token address)
+    tokenAddress: "", // Token address (WHAT)
+    minimumBalance: 0, // Minimum balance to hold (HOW MUCH)
+    deadline: "", // Deadline timestamp (UNTIL WHEN)
+    stake: 0, // Stake amount (SKIN IN THE GAME)
+    statement: "", // Optional: Intent statement (for display only)
   });
+  const [currentBalance, setCurrentBalance] = useState<number | null>(null);
 
   const nextStep = () => setStep((s) => (s + 1) as Step);
   const prevStep = () => setStep((s) => (s - 1) as Step);
@@ -121,6 +122,38 @@ export default function CreatePactPage() {
         throw new Error("Deadline must be in the future");
       }
 
+      // Validate all required fields
+      if (!formData.tokenAddress) {
+        throw new Error("Token address is required");
+      }
+
+      // Validate token address format (must be a valid hex address)
+      // Reject type identifiers like "0x1::aptos_coin::AptosCoin"
+      if (formData.tokenAddress.includes("::")) {
+        throw new Error(
+          "Invalid format: Type identifiers (like '0x1::aptos_coin::AptosCoin') are not supported. " +
+            "Please enter a wallet address (e.g., your address: " +
+            address?.slice(0, 10) +
+            "...) to track MOVE balance."
+        );
+      }
+
+      const addressPattern = /^0x[0-9a-fA-F]{1,64}$/;
+      if (!addressPattern.test(formData.tokenAddress)) {
+        throw new Error(
+          "Invalid address format. Must be a valid address (0x followed by hex characters). " +
+            "For MVP, use your wallet address to track MOVE balance."
+        );
+      }
+
+      if (formData.minimumBalance <= 0) {
+        throw new Error("Minimum balance must be greater than 0");
+      }
+
+      if (!formData.deadline) {
+        throw new Error("Deadline is required");
+      }
+
       // Convert stake amount to octas (1 MOVE = 100,000,000 octas)
       const stakeAmountOctas = Math.floor(formData.stake * 100_000_000);
 
@@ -129,17 +162,15 @@ export default function CreatePactPage() {
         throw new Error("Minimum stake is 0.01 MOVE");
       }
 
-      // For MVP: Use the user's address as token address (they're committing to hold their own balance)
-      // In production, this would be the address of the token they're committing to hold
-      const tokenAddress = formData.tokenAddress || address;
-
-      // Get current balance (for MVP, we'll use a placeholder - in production, fetch actual token balance)
-      // For now, we'll use 0 as start balance (the contract will check the actual balance)
-      const startBalance = 0; // TODO: Fetch actual token balance from chain
+      // Convert minimum balance to octas (assuming 8 decimals for now)
+      // TODO: Fetch token decimals from contract
+      const minimumBalanceOctas = Math.floor(
+        formData.minimumBalance * 100_000_000
+      );
 
       const params: CreatePactParams = {
-        tokenAddress,
-        startBalance,
+        tokenAddress: formData.tokenAddress,
+        startBalance: minimumBalanceOctas, // This is the minimum balance they commit to hold
         stakeAmount: stakeAmountOctas,
         deadlineSeconds: deadlineSeconds,
       };
@@ -171,11 +202,36 @@ export default function CreatePactPage() {
   };
 
   const steps = [
-    { id: 1, name: "Intent Type" },
-    { id: 2, name: "Statement" },
-    { id: 3, name: "Stake" },
-    { id: 4, name: "Review" },
+    { id: 1, name: "Token" },
+    { id: 2, name: "Minimum Balance" },
+    { id: 3, name: "Deadline" },
+    { id: 4, name: "Stake" },
+    { id: 5, name: "Review" },
   ];
+
+  // Fetch current balance when token address is provided
+  useEffect(() => {
+    const fetchBalance = async () => {
+      if (!formData.tokenAddress || !address) {
+        setCurrentBalance(null);
+        return;
+      }
+
+      try {
+        // For now, we'll fetch MOVE balance as a reference
+        // TODO: Fetch actual token balance based on token address
+        const balance = await getCurrentBalance(address);
+        setCurrentBalance(balance);
+      } catch (error) {
+        console.error("Error fetching balance:", error);
+        setCurrentBalance(null);
+      }
+    };
+
+    if (address) {
+      fetchBalance();
+    }
+  }, [formData.tokenAddress, address]);
 
   return (
     <div className="max-w-2xl mx-auto px-6 py-12 pb-32">
@@ -191,7 +247,7 @@ export default function CreatePactPage() {
                   step >= s.id ? "bg-[#F26B3A]" : "bg-[#23262F]"
                 }`}
               />
-              {s.id !== 4 && (
+              {s.id !== 5 && (
                 <div
                   className={`flex-1 h-[2px] ${
                     step > s.id ? "bg-[#F26B3A]" : "bg-[#23262F]"
@@ -213,60 +269,148 @@ export default function CreatePactPage() {
         >
           {step === 1 && (
             <div className="space-y-6">
-              <p className="text-[#8E9094] mb-8">
-                What type of commitment are you making?
-              </p>
-              <div className="grid gap-4">
-                {(["HOLD", "SHIP", "ATTEND"] as const).map((t) => (
-                  <button
-                    key={t}
-                    onClick={() => {
-                      setFormData({ ...formData, type: t });
-                      nextStep();
-                    }}
-                    className={`p-6 text-left border transition-all ${
-                      formData.type === t
-                        ? "border-[#F26B3A] bg-[#F26B3A]/5"
-                        : "border-[#23262F] hover:border-[#8E9094]"
-                    }`}
-                  >
-                    <span className="block text-xl font-bold uppercase mb-1">
-                      {t}
-                    </span>
-                    <span className="text-sm text-[#8E9094]">
-                      {t === "HOLD" &&
-                        "I will hold specific tokens until a date."}
-                      {t === "SHIP" && "I will complete and release a project."}
-                      {t === "ATTEND" &&
-                        "I will be physically present at an event."}
-                    </span>
-                  </button>
-                ))}
+              <div className="mb-8">
+                <h3 className="text-xl font-bold mb-2">1️⃣ Asset (WHAT)</h3>
+                <p className="text-sm text-[#8E9094] mb-4">
+                  Enter the token address you want to track. This is the token
+                  you commit to hold.
+                </p>
+              </div>
+              <label className="block">
+                <span className="text-sm uppercase font-bold tracking-widest text-[#8E9094] mb-2 block">
+                  Token Address *
+                </span>
+                <input
+                  autoFocus
+                  type="text"
+                  className="w-full bg-[#15171C] border border-[#23262F] p-4 text-white font-mono focus:outline-none focus:border-[#F26B3A]"
+                  placeholder={address || "0x..."}
+                  value={formData.tokenAddress}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      tokenAddress: e.target.value.trim(),
+                    })
+                  }
+                />
+                <div className="mt-2 space-y-1">
+                  {address && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setFormData({ ...formData, tokenAddress: address })
+                      }
+                      className="text-xs text-[#F26B3A] hover:underline"
+                    >
+                      Use my wallet address ({address.slice(0, 6)}...
+                      {address.slice(-4)})
+                    </button>
+                  )}
+                  {currentBalance !== null && (
+                    <p className="text-xs text-[#8E9094]">
+                      Current MOVE balance:{" "}
+                      {(currentBalance / 100_000_000).toFixed(2)} MOVE
+                    </p>
+                  )}
+                  <p className="text-xs text-[#8E9094]">
+                    <strong>Note:</strong> For MVP, enter your wallet address to
+                    track your MOVE balance. Must be a valid address (0x
+                    followed by hex characters).
+                  </p>
+                </div>
+              </label>
+              <div className="flex gap-4">
+                <Button
+                  variant="outline"
+                  onClick={() => router.back()}
+                  className="flex-1"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={nextStep}
+                  className="flex-1"
+                  disabled={!formData.tokenAddress}
+                >
+                  Next
+                </Button>
               </div>
             </div>
           )}
 
           {step === 2 && (
             <div className="space-y-6">
+              <div className="mb-8">
+                <h3 className="text-xl font-bold mb-2">
+                  2️⃣ Minimum Balance (HOW MUCH)
+                </h3>
+                <p className="text-sm text-[#8E9094] mb-4">
+                  Enter the minimum amount you commit to hold. If your balance
+                  drops below this at the deadline, the pact fails.
+                </p>
+              </div>
               <label className="block">
                 <span className="text-sm uppercase font-bold tracking-widest text-[#8E9094] mb-2 block">
-                  The Intent Statement
+                  Minimum Balance to Hold *
                 </span>
-                <textarea
-                  autoFocus
-                  className="w-full bg-[#15171C] border border-[#23262F] p-4 text-2xl font-caveat text-[#4FD1C5] focus:outline-none focus:border-[#F26B3A] min-h-[150px]"
-                  placeholder="I will not sell my MOVE until..."
-                  value={formData.statement}
-                  onChange={(e) =>
-                    setFormData({ ...formData, statement: e.target.value })
-                  }
-                />
+                <div className="flex items-center gap-4">
+                  <input
+                    autoFocus
+                    type="number"
+                    step="0.00000001"
+                    className="w-full bg-[#15171C] border border-[#23262F] p-4 text-3xl font-bold text-white text-center focus:outline-none focus:border-[#F26B3A]"
+                    placeholder="0.00"
+                    value={formData.minimumBalance || ""}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        minimumBalance: Number(e.target.value),
+                      })
+                    }
+                  />
+                  <span className="text-xl font-bold text-[#F26B3A]">MOVE</span>
+                </div>
+                {currentBalance !== null && (
+                  <p className="text-xs text-[#8E9094] mt-2">
+                    Your current balance:{" "}
+                    {(currentBalance / 100_000_000).toFixed(2)} MOVE
+                  </p>
+                )}
               </label>
+              <div className="flex gap-4">
+                <Button variant="outline" onClick={prevStep} className="flex-1">
+                  Back
+                </Button>
+                <Button
+                  onClick={nextStep}
+                  className="flex-1"
+                  disabled={
+                    !formData.minimumBalance || formData.minimumBalance <= 0
+                  }
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {step === 3 && (
+            <div className="space-y-6">
+              <div className="mb-8">
+                <h3 className="text-xl font-bold mb-2">
+                  3️⃣ Duration (UNTIL WHEN)
+                </h3>
+                <p className="text-sm text-[#8E9094] mb-4">
+                  When does this commitment end? After this time, the pact can
+                  be resolved.
+                </p>
+              </div>
               <label className="block">
                 <span className="text-sm uppercase font-bold tracking-widest text-[#8E9094] mb-2 block">
-                  Deadline
+                  Deadline *
                 </span>
                 <input
+                  autoFocus
                   type="datetime-local"
                   className="w-full bg-[#15171C] border border-[#23262F] p-4 text-white focus:outline-none focus:border-[#F26B3A]"
                   value={formData.deadline}
@@ -282,7 +426,7 @@ export default function CreatePactPage() {
                 <Button
                   onClick={nextStep}
                   className="flex-1"
-                  disabled={!formData.statement || !formData.deadline}
+                  disabled={!formData.deadline}
                 >
                   Next
                 </Button>
@@ -290,16 +434,27 @@ export default function CreatePactPage() {
             </div>
           )}
 
-          {step === 3 && (
-            <div className="space-y-8">
+          {step === 4 && (
+            <div className="space-y-6">
+              <div className="mb-8">
+                <h3 className="text-xl font-bold mb-2">
+                  4️⃣ Stake / Penalty (SKIN IN THE GAME)
+                </h3>
+                <p className="text-sm text-[#8E9094] mb-4">
+                  How much MOVE are you staking? If you break the pact (balance
+                  drops below minimum), this will be slashed (90% returned to
+                  you, 10% protocol fee).
+                </p>
+              </div>
               <div className="bg-[#15171C] border border-[#23262F] p-8 text-center">
                 <span className="text-sm uppercase font-bold tracking-widest text-[#8E9094] mb-4 block">
-                  Stake Amount
+                  Stake Amount *
                 </span>
                 <div className="flex items-center justify-center gap-4">
                   <input
                     type="number"
                     autoFocus
+                    step="0.01"
                     className="bg-transparent text-5xl font-bold text-white text-center w-full focus:outline-none"
                     value={formData.stake || ""}
                     onChange={(e) =>
@@ -311,14 +466,13 @@ export default function CreatePactPage() {
                     placeholder="0.00"
                   />
                   <span className="text-2xl font-bold text-[#F26B3A]">
-                    {formData.token}
+                    MOVE
                   </span>
                 </div>
+                <p className="text-xs text-[#8E9094] mt-4">
+                  Minimum: 0.01 MOVE
+                </p>
               </div>
-              <p className="text-center text-sm text-[#8E9094]">
-                If you fail this pact, your stake will be slashed according to
-                protocol rules.
-              </p>
               <div className="flex gap-4">
                 <Button variant="outline" onClick={prevStep} className="flex-1">
                   Back
@@ -326,7 +480,7 @@ export default function CreatePactPage() {
                 <Button
                   onClick={nextStep}
                   className="flex-1"
-                  disabled={!formData.stake}
+                  disabled={!formData.stake || formData.stake < 0.01}
                 >
                   Review
                 </Button>
@@ -334,38 +488,98 @@ export default function CreatePactPage() {
             </div>
           )}
 
-          {step === 4 && (
+          {step === 5 && (
             <div className="space-y-8">
+              <div className="mb-6">
+                <h3 className="text-xl font-bold mb-2">Review Your Pact</h3>
+                <p className="text-sm text-[#8E9094]">
+                  Verify all parameters before creating. This commitment is
+                  enforceable on-chain.
+                </p>
+              </div>
+
               <Card className="border-[#F26B3A]">
                 <div className="space-y-6">
-                  <div>
-                    <span className="text-[10px] uppercase font-bold tracking-widest text-[#8E9094] block mb-1">
-                      Type: {formData.type}
-                    </span>
-                    <h3 className="text-3xl font-caveat text-[#4FD1C5]">
-                      &quot;{formData.statement}&quot;
-                    </h3>
-                  </div>
-                  <div className="flex justify-between border-t border-[#23262F] pt-4">
+                  {/* Optional Intent Statement */}
+                  {formData.statement && (
+                    <div className="pb-4 border-b border-[#23262F]">
+                      <span className="text-[10px] uppercase font-bold tracking-widest text-[#8E9094] block mb-2">
+                        Intent Statement (Optional - for display only)
+                      </span>
+                      <p className="text-lg font-caveat text-[#4FD1C5]">
+                        &quot;{formData.statement}&quot;
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Required Parameters */}
+                  <div className="space-y-4">
                     <div>
                       <span className="text-[10px] uppercase font-bold tracking-widest text-[#8E9094] block mb-1">
-                        Staking
+                        1. Asset (WHAT)
                       </span>
-                      <span className="font-bold text-xl">
-                        {formData.stake} {formData.token}
-                      </span>
+                      <p className="font-mono text-sm break-all">
+                        {formData.tokenAddress}
+                      </p>
                     </div>
-                    <div className="text-right">
+
+                    <div>
                       <span className="text-[10px] uppercase font-bold tracking-widest text-[#8E9094] block mb-1">
-                        Ends
+                        2. Minimum Balance (HOW MUCH)
                       </span>
-                      <span className="font-bold">
-                        {new Date(formData.deadline).toLocaleDateString()}
+                      <p className="font-bold text-xl">
+                        ≥ {formData.minimumBalance} MOVE
+                      </p>
+                    </div>
+
+                    <div>
+                      <span className="text-[10px] uppercase font-bold tracking-widest text-[#8E9094] block mb-1">
+                        3. Duration (UNTIL WHEN)
                       </span>
+                      <p className="font-bold">
+                        {new Date(formData.deadline).toLocaleString()}
+                      </p>
+                    </div>
+
+                    <div>
+                      <span className="text-[10px] uppercase font-bold tracking-widest text-[#8E9094] block mb-1">
+                        4. Stake / Penalty (SKIN IN THE GAME)
+                      </span>
+                      <p className="font-bold text-xl text-[#F26B3A]">
+                        {formData.stake} MOVE
+                      </p>
+                      <p className="text-xs text-[#8E9094] mt-1">
+                        If balance drops below {formData.minimumBalance} MOVE at
+                        deadline, this stake will be slashed (90% returned, 10%
+                        protocol fee)
+                      </p>
                     </div>
                   </div>
                 </div>
               </Card>
+
+              {/* Optional: Add Intent Statement */}
+              {!formData.statement && (
+                <div className="border border-dashed border-[#23262F] p-4 rounded">
+                  <label className="block">
+                    <span className="text-xs uppercase font-bold tracking-widest text-[#8E9094] block mb-2">
+                      Add Intent Statement (Optional)
+                    </span>
+                    <textarea
+                      className="w-full bg-[#15171C] border border-[#23262F] p-3 text-sm font-caveat text-[#4FD1C5] focus:outline-none focus:border-[#F26B3A] min-h-[80px]"
+                      placeholder="e.g., 'I'm holding because I believe in the long-term vision' (for display only, not enforced)"
+                      value={formData.statement}
+                      onChange={(e) =>
+                        setFormData({ ...formData, statement: e.target.value })
+                      }
+                    />
+                    <p className="text-xs text-[#8E9094] mt-2">
+                      This is for social signaling only. The contract only
+                      checks the 4 parameters above.
+                    </p>
+                  </label>
+                </div>
+              )}
               {error && (
                 <div className="bg-red-500/10 border border-red-500/50 text-red-400 p-4 rounded">
                   {error}

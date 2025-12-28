@@ -2,9 +2,9 @@
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
-import { PactStatusBadge } from "../../components/pact/pact-status-badge";
+import { useParams } from "next/navigation";
 import { Button } from "../../components/ui/button";
+import { PactStatusBadge } from "../../components/pact/pact-status-badge";
 import { Card } from "../../components/ui/card";
 import { fetchPact } from "../../lib/pactTransactions";
 
@@ -22,7 +22,6 @@ interface Pact {
 
 export default function PactDetailPage() {
   const params = useParams();
-  const router = useRouter();
   const id = params?.id as string;
   const [pact, setPact] = useState<Pact | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -183,9 +182,21 @@ export default function PactDetailPage() {
           <section>
             <PactStatusBadge status={pact.status} />
             <h1 className="text-4xl md:text-6xl font-caveat text-[#4FD1C5] mt-6 leading-tight">
-              &quot;Hold token balance until {deadlineDate.toLocaleDateString()}
-              &quot;
+              &quot;Hold ≥ {(pact.startBalance / 100_000_000).toFixed(2)} MOVE
+              until {deadlineDate.toLocaleDateString()}&quot;
             </h1>
+            <div className="flex items-center gap-4 mt-4">
+              <p className="text-sm text-[#8E9094]">
+                Token: {pact.tokenAddress.slice(0, 6)}...
+                {pact.tokenAddress.slice(-4)}
+              </p>
+              <Link
+                href={`/profile/${pact.creator}`}
+                className="text-sm text-[#F26B3A] hover:underline"
+              >
+                View Creator Profile →
+              </Link>
+            </div>
           </section>
 
           <section className="space-y-6">
@@ -251,6 +262,26 @@ export default function PactDetailPage() {
             </Link>
           )}
 
+          <div className="space-y-2 mt-4">
+            <Link href={`/profile/${pact.creator}`}>
+              <Button variant="outline" className="w-full">
+                View Creator Profile
+              </Button>
+            </Link>
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() => {
+                const url = `${window.location.origin}/pacts/${id}`;
+                navigator.clipboard.writeText(url);
+                // You could add a toast notification here
+                alert("Pact link copied to clipboard!");
+              }}
+            >
+              Share Pact
+            </Button>
+          </div>
+
           {pact.status === "ACTIVE" && !isDeadlinePassed && (
             <div className="text-xs text-[#8E9094] text-center">
               Pact can be resolved after deadline
@@ -262,12 +293,18 @@ export default function PactDetailPage() {
               Resolution Logic
             </h4>
             <p className="text-xs text-[#8E9094] leading-relaxed">
-              This pact tracks the balance of token at address{" "}
-              {pact.tokenAddress.slice(0, 6)}...{pact.tokenAddress.slice(-4)}.
-              If the current balance is greater than or equal to the start
-              balance ({pact.startBalance}) at the deadline, the pact passes and
-              the full stake is returned. Otherwise, 90% of the stake is
-              returned and 10% goes to the protocol.
+              <strong>Resolution Logic:</strong> At the deadline, the contract
+              checks if your balance of token {pact.tokenAddress.slice(0, 6)}...
+              {pact.tokenAddress.slice(-4)} is greater than or equal to{" "}
+              {(pact.startBalance / 100_000_000).toFixed(2)} MOVE (the minimum
+              you committed to hold).
+              <br />
+              <br />✅ <strong>PASS:</strong> Balance ≥{" "}
+              {(pact.startBalance / 100_000_000).toFixed(2)} MOVE → Full stake
+              returned
+              <br />❌ <strong>FAIL:</strong> Balance &lt;{" "}
+              {(pact.startBalance / 100_000_000).toFixed(2)} MOVE → Stake
+              slashed (90% returned, 10% protocol fee)
             </p>
           </div>
         </div>

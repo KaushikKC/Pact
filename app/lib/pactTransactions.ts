@@ -582,6 +582,75 @@ export const fetchAllPacts = async (): Promise<any[]> => {
 };
 
 /**
+ * Calculate user statistics from their pacts
+ */
+export const getUserStats = async (
+  userAddress: string
+): Promise<{
+  totalPacts: number;
+  activePacts: number;
+  passedPacts: number;
+  failedPacts: number;
+  successRate: number;
+  totalStaked: number;
+  totalVolume: number;
+  reputationScore: number;
+}> => {
+  try {
+    const userPacts = await fetchUserPacts(userAddress);
+
+    const totalPacts = userPacts.length;
+    const activePacts = userPacts.filter((p) => p.status === 0).length;
+    const passedPacts = userPacts.filter((p) => p.status === 1).length;
+    const failedPacts = userPacts.filter((p) => p.status === 2).length;
+
+    // Calculate success rate (only from resolved pacts)
+    const resolvedPacts = passedPacts + failedPacts;
+    const successRate =
+      resolvedPacts > 0 ? (passedPacts / resolvedPacts) * 100 : 0;
+
+    // Calculate total staked (sum of all stake amounts)
+    const totalStaked = userPacts.reduce(
+      (sum, pact) => sum + pact.stakeAmount,
+      0
+    );
+
+    // Calculate total volume (same as total staked for now)
+    const totalVolume = totalStaked;
+
+    // Calculate reputation score (0-100)
+    // Formula: (success_rate * 0.7) + (total_pacts_normalized * 0.3)
+    // This rewards both consistency and activity
+    const maxPactsForNormalization = 100; // Normalize to 0-1 scale
+    const pactsScore = Math.min(totalPacts / maxPactsForNormalization, 1) * 100;
+    const reputationScore = successRate * 0.7 + pactsScore * 0.3;
+
+    return {
+      totalPacts,
+      activePacts,
+      passedPacts,
+      failedPacts,
+      successRate: Math.round(successRate * 10) / 10, // Round to 1 decimal
+      totalStaked,
+      totalVolume,
+      reputationScore: Math.round(reputationScore * 10) / 10, // Round to 1 decimal
+    };
+  } catch (error) {
+    console.error("Error calculating user stats:", error);
+    return {
+      totalPacts: 0,
+      activePacts: 0,
+      passedPacts: 0,
+      failedPacts: 0,
+      successRate: 0,
+      totalStaked: 0,
+      totalVolume: 0,
+      reputationScore: 0,
+    };
+  }
+};
+
+/**
  * Get protocol statistics
  * Note: Total volume calculation requires fetching all pacts, which may fail if event query doesn't work
  */

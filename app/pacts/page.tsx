@@ -56,10 +56,10 @@ export default function MyPactsPage() {
           deadline: pact.deadline,
           status: getStatusFromCode(pact.status),
           creator: pact.creator,
-          // For MVP, we'll use placeholder values (in production, these could be stored in events or metadata)
-          statement: `Hold token balance until ${new Date(
-            pact.deadline * 1000
-          ).toLocaleDateString()}`,
+          // Generate statement from contract data
+          statement: `Hold ≥ ${(pact.startBalance / 100_000_000).toFixed(
+            2
+          )} MOVE until ${new Date(pact.deadline * 1000).toLocaleDateString()}`,
           type: "HOLD",
           token: "MOVE",
         }));
