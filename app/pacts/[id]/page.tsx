@@ -7,7 +7,15 @@ import { Button } from "../../components/ui/button";
 import { PactStatusBadge } from "../../components/pact/pact-status-badge";
 import { Card } from "../../components/ui/card";
 import { SharePactButton } from "../../components/pact/share-pact-button";
-import { fetchPact } from "../../lib/pactTransactions";
+import {
+  fetchPact,
+  submitChallengePactTransaction,
+  submitJoinGroupPactTransaction,
+  getCurrentBalance,
+  CONTRACT_ADDRESS,
+} from "../../lib/pactTransactions";
+import { MOVEMENT_CONFIGS, CURRENT_NETWORK } from "../../lib/aptos";
+import { useWallet } from "../../contexts/WalletContext";
 
 type PactStatus = "ACTIVE" | "PASSED" | "FAILED";
 
@@ -19,15 +27,35 @@ interface Pact {
   status: PactStatus;
   creator: string;
   index: number;
+  isGroup?: boolean;
+  maxGroupSize?: number;
+  challenge?: { challenger: string; challengeStake: number } | null;
+  groupMembers?: string[];
+}
+
+interface TimelineEvent {
+  type: "created" | "challenged" | "member_joined" | "deadline" | "resolved";
+  label: string;
+  date: string;
+  status: "complete" | "pending" | "upcoming";
+  details?: string;
 }
 
 export default function PactDetailPage() {
   const params = useParams();
   const id = params?.id as string;
+  const { address, isConnected, signAndSubmitTransaction } = useWallet();
   const [pact, setPact] = useState<Pact | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [timeLeft, setTimeLeft] = useState("");
+  const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
+  const [showChallengeModal, setShowChallengeModal] = useState(false);
+  const [challengeAmount, setChallengeAmount] = useState("");
+  const [isChallenging, setIsChallenging] = useState(false);
+  const [showJoinModal, setShowJoinModal] = useState(false);
+  const [joinStake, setJoinStake] = useState("");
+  const [isJoining, setIsJoining] = useState(false);
 
   // Parse ID to get creator address and index
   useEffect(() => {
@@ -70,7 +98,7 @@ export default function PactDetailPage() {
           2: "FAILED",
         };
 
-        setPact({
+        const pactData: Pact = {
           tokenAddress: fetchedPact.tokenAddress,
           startBalance: fetchedPact.startBalance,
           stakeAmount: fetchedPact.stakeAmount,
@@ -78,7 +106,16 @@ export default function PactDetailPage() {
           status: statusMap[fetchedPact.status] || "ACTIVE",
           creator: fetchedPact.creator,
           index: fetchedPact.index,
-        });
+          isGroup: fetchedPact.isGroup || false,
+          maxGroupSize: fetchedPact.maxGroupSize || 0,
+          challenge: fetchedPact.challenge || null,
+          groupMembers: fetchedPact.groupMembers || [],
+        };
+
+        setPact(pactData);
+
+        // Build timeline from events
+        await buildTimeline(creatorAddress, index, pactData);
       } catch (err: any) {
         console.error("Error loading pact:", err);
         setError(err?.message || "Failed to load pact");
@@ -89,6 +126,217 @@ export default function PactDetailPage() {
 
     loadPact();
   }, [id]);
+
+  // Build timeline from events
+  const buildTimeline = async (
+    creatorAddress: string,
+    pactIndex: number,
+    pactData: Pact
+  ) => {
+    const events: TimelineEvent[] = [];
+    const fullnodeUrl = MOVEMENT_CONFIGS[CURRENT_NETWORK].fullnode;
+
+    try {
+      // Fetch creation event
+      const createdEvents = await fetch(
+        `${fullnodeUrl}/accounts/${CONTRACT_ADDRESS}/events/${encodeURIComponent(
+          `${CONTRACT_ADDRESS}::pact::PactRegistry`
+        )}/${encodeURIComponent("pact_created_events")}?limit=1000`
+      ).then((r) => r.json());
+
+      const creationEvent = createdEvents.find(
+        (e: any) =>
+          e.data?.creator === creatorAddress && e.data?.pact_id === pactIndex
+      );
+
+      if (creationEvent) {
+        events.push({
+          type: "created",
+          label: "Pact Created",
+          date: new Date(Number(creationEvent.data?.deadline) * 1000 - 86400000).toLocaleString(), // Approximate
+          status: "complete",
+          details: `Stake locked: ${(pactData.stakeAmount / 100_000_000).toFixed(2)} MOVE`,
+        });
+      }
+
+      // Fetch challenge event
+      if (pactData.challenge) {
+        const challengeEvents = await fetch(
+          `${fullnodeUrl}/accounts/${CONTRACT_ADDRESS}/events/${encodeURIComponent(
+            `${CONTRACT_ADDRESS}::pact::PactRegistry`
+          )}/${encodeURIComponent("pact_challenged_events")}?limit=1000`
+        ).then((r) => r.json());
+
+        const challengeEvent = challengeEvents.find(
+          (e: any) =>
+            e.data?.creator === creatorAddress &&
+            e.data?.pact_id === pactIndex
+        );
+
+        if (challengeEvent) {
+          events.push({
+            type: "challenged",
+            label: "Challenged",
+            date: new Date(Number(challengeEvent.version) * 1000).toLocaleString(),
+            status: "complete",
+            details: `Challenged by ${pactData.challenge.challenger.slice(0, 6)}...${pactData.challenge.challenger.slice(-4)} with ${(pactData.challenge.challengeStake / 100_000_000).toFixed(2)} MOVE`,
+          });
+        }
+      }
+
+      // Add group member join events
+      if (pactData.isGroup && pactData.groupMembers) {
+        const joinEvents = await fetch(
+          `${fullnodeUrl}/accounts/${CONTRACT_ADDRESS}/events/${encodeURIComponent(
+            `${CONTRACT_ADDRESS}::pact::PactRegistry`
+          )}/${encodeURIComponent("group_member_joined_events")}?limit=1000`
+        ).then((r) => r.json());
+
+        const relevantJoinEvents = joinEvents.filter(
+          (e: any) =>
+            e.data?.creator === creatorAddress && e.data?.pact_id === pactIndex
+        );
+
+        relevantJoinEvents.forEach((e: any) => {
+          events.push({
+            type: "member_joined",
+            label: "Member Joined",
+            date: new Date(Number(e.version) * 1000).toLocaleString(),
+            status: "complete",
+            details: `${e.data?.member.slice(0, 6)}...${e.data?.member.slice(-4)} joined`,
+          });
+        });
+      }
+
+      // Add deadline
+      events.push({
+        type: "deadline",
+        label: "Deadline Reached",
+        date: new Date(pactData.deadline * 1000).toLocaleString(),
+        status:
+          Date.now() >= pactData.deadline * 1000 ? "complete" : "pending",
+      });
+
+      // Add resolution if resolved
+      if (pactData.status !== "ACTIVE") {
+        events.push({
+          type: "resolved",
+          label: "Resolved",
+          date: "Resolved",
+          status: "complete",
+          details: pactData.status === "PASSED" ? "✅ PASSED" : "❌ FAILED",
+        });
+      }
+
+      // Sort by date
+      events.sort((a, b) => {
+        if (a.date === "Resolved" || b.date === "Resolved") return 1;
+        return new Date(a.date).getTime() - new Date(b.date).getTime();
+      });
+
+      setTimelineEvents(events);
+    } catch (err) {
+      console.error("Error building timeline:", err);
+      // Fallback timeline
+      setTimelineEvents([
+        {
+          type: "created",
+          label: "Pact Created",
+          date: "TBD",
+          status: "complete",
+        },
+        {
+          type: "deadline",
+          label: "Deadline",
+          date: new Date(pactData.deadline * 1000).toLocaleString(),
+          status: Date.now() >= pactData.deadline * 1000 ? "complete" : "pending",
+        },
+        {
+          type: "resolved",
+          label: "Resolved",
+          date: pactData.status !== "ACTIVE" ? "Resolved" : "TBD",
+          status: pactData.status !== "ACTIVE" ? "complete" : "upcoming",
+        },
+      ]);
+    }
+  };
+
+  const handleChallenge = async () => {
+    if (!isConnected || !address || !signAndSubmitTransaction || !pact) {
+      setError("Please connect your wallet");
+      return;
+    }
+
+    if (!challengeAmount || Number(challengeAmount) < 0.01) {
+      setError("Minimum challenge stake is 0.01 MOVE");
+      return;
+    }
+
+    setIsChallenging(true);
+    setError(null);
+
+    try {
+      const challengeStakeOctas = Math.floor(
+        Number(challengeAmount) * 100_000_000
+      );
+
+      await submitChallengePactTransaction(
+        pact.creator,
+        pact.index,
+        challengeStakeOctas,
+        address,
+        signAndSubmitTransaction
+      );
+
+      setShowChallengeModal(false);
+      setChallengeAmount("");
+      // Reload pact to show challenge
+      window.location.reload();
+    } catch (err: any) {
+      setError(err?.message || "Failed to challenge pact");
+    } finally {
+      setIsChallenging(false);
+    }
+  };
+
+  const handleJoinGroup = async () => {
+    if (!isConnected || !address || !signAndSubmitTransaction || !pact) {
+      setError("Please connect your wallet");
+      return;
+    }
+
+    if (!joinStake || Number(joinStake) < 0.01) {
+      setError("Minimum stake is 0.01 MOVE");
+      return;
+    }
+
+    setIsJoining(true);
+    setError(null);
+
+    try {
+      const currentBalance = await getCurrentBalance(address);
+      const stakeOctas = Math.floor(Number(joinStake) * 100_000_000);
+      const balanceOctas = Math.floor(currentBalance);
+
+      await submitJoinGroupPactTransaction(
+        pact.creator,
+        pact.index,
+        stakeOctas,
+        balanceOctas,
+        address,
+        signAndSubmitTransaction
+      );
+
+      setShowJoinModal(false);
+      setJoinStake("");
+      // Reload pact to show new member
+      window.location.reload();
+    } catch (err: any) {
+      setError(err?.message || "Failed to join group pact");
+    } finally {
+      setIsJoining(false);
+    }
+  };
 
   // Calculate time remaining
   useEffect(() => {
@@ -145,29 +393,18 @@ export default function PactDetailPage() {
   const deadlineDate = new Date(pact.deadline * 1000);
   const isDeadlinePassed = Date.now() >= deadlineDate.getTime();
   const canResolve = pact.status === "ACTIVE" && isDeadlinePassed;
-
-  const timelineSteps = [
-    {
-      label: "Created",
-      date: "...", // We don't store creation date in contract
-      status: "complete",
-    },
-    {
-      label: "Active",
-      date: "...",
-      status: pact.status === "ACTIVE" ? "complete" : "complete",
-    },
-    {
-      label: "Deadline",
-      date: deadlineDate.toLocaleString(),
-      status: isDeadlinePassed ? "complete" : "pending",
-    },
-    {
-      label: "Resolved",
-      date: pact.status !== "ACTIVE" ? "Resolved" : "...",
-      status: pact.status !== "ACTIVE" ? "complete" : "upcoming",
-    },
-  ];
+  const canChallenge =
+    pact.status === "ACTIVE" &&
+    !isDeadlinePassed &&
+    !pact.challenge &&
+    address !== pact.creator;
+  const canJoinGroup =
+    pact.isGroup &&
+    pact.status === "ACTIVE" &&
+    !isDeadlinePassed &&
+    address !== pact.creator &&
+    (pact.groupMembers?.length || 0) < (pact.maxGroupSize || 0) &&
+    !pact.groupMembers?.includes(address || "");
 
   return (
     <div className="max-w-4xl mx-auto px-6 py-12 pb-32">
@@ -200,34 +437,88 @@ export default function PactDetailPage() {
             </div>
           </section>
 
+          {pact.isGroup && (
+            <section className="space-y-4">
+              <h3 className="text-[10px] uppercase font-bold tracking-widest text-[#8E9094]">
+                Group Members ({pact.groupMembers?.length || 0}/{pact.maxGroupSize || 0})
+              </h3>
+              <div className="flex flex-wrap gap-2">
+                {pact.groupMembers?.map((member, i) => (
+                  <Link
+                    key={i}
+                    href={`/profile/${member}`}
+                    className="px-3 py-1 bg-[#15171C] border border-[#23262F] rounded text-sm hover:border-[#F26B3A] transition-colors"
+                  >
+                    {member.slice(0, 6)}...{member.slice(-4)}
+                  </Link>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {pact.challenge && (
+            <section className="space-y-4">
+              <h3 className="text-[10px] uppercase font-bold tracking-widest text-[#8E9094]">
+                Challenge
+              </h3>
+              <Card className="border-[#F26B3A]">
+                <p className="text-sm mb-2">
+                  Challenged by{" "}
+                  <Link
+                    href={`/profile/${pact.challenge.challenger}`}
+                    className="text-[#F26B3A] hover:underline"
+                  >
+                    {pact.challenge.challenger.slice(0, 6)}...
+                    {pact.challenge.challenger.slice(-4)}
+                  </Link>
+                </p>
+                <p className="text-xs text-[#8E9094]">
+                  Challenge stake:{" "}
+                  {(pact.challenge.challengeStake / 100_000_000).toFixed(2)} MOVE
+                </p>
+                <p className="text-xs text-[#8E9094] mt-2">
+                  If creator succeeds → wins challenger stake. If fails →
+                  challenger wins + creator slashed.
+                </p>
+              </Card>
+            </section>
+          )}
+
           <section className="space-y-6">
             <h3 className="text-[10px] uppercase font-bold tracking-widest text-[#8E9094]">
               Pact Timeline
             </h3>
             <div className="relative pl-8 space-y-8 before:content-[''] before:absolute before:left-[11px] before:top-2 before:bottom-2 before:w-[2px] before:bg-[#23262F]">
-              {timelineSteps.map((step, i) => (
-                <div key={i} className="relative">
-                  <div
-                    className={`absolute -left-8 top-1 w-6 h-6 rounded-full border-4 border-[#0E0F12] flex items-center justify-center ${
-                      step.status === "complete"
-                        ? "bg-[#3FB950]"
-                        : step.status === "pending"
-                        ? "bg-[#F26B3A]"
-                        : "bg-[#23262F]"
-                    }`}
-                  />
-                  <div>
-                    <p className="font-bold text-sm uppercase tracking-wider">
-                      {step.label}
-                    </p>
-                    <p className="text-xs text-[#8E9094]">
-                      {step.date === "..."
-                        ? "TBD"
-                        : new Date(step.date).toLocaleString()}
-                    </p>
-                  </div>
-                </div>
-              ))}
+              {timelineEvents.length > 0
+                ? timelineEvents.map((event, i) => (
+                    <div key={i} className="relative">
+                      <div
+                        className={`absolute -left-8 top-1 w-6 h-6 rounded-full border-4 border-[#0E0F12] flex items-center justify-center ${
+                          event.status === "complete"
+                            ? "bg-[#3FB950]"
+                            : event.status === "pending"
+                            ? "bg-[#F26B3A]"
+                            : "bg-[#23262F]"
+                        }`}
+                      />
+                      <div>
+                        <p className="font-bold text-sm uppercase tracking-wider">
+                          {event.label}
+                        </p>
+                        <p className="text-xs text-[#8E9094]">
+                          {event.date === "TBD" || event.date === "Resolved"
+                            ? event.date
+                            : event.date}
+                        </p>
+                        {event.details && (
+                          <p className="text-xs text-[#8E9094] mt-1">
+                            {event.details}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                : null}
             </div>
           </section>
         </div>
@@ -255,12 +546,44 @@ export default function PactDetailPage() {
             <div className="text-2xl font-bold font-mono">{timeLeft}</div>
           </Card>
 
+          {canJoinGroup && (
+            <Button
+              className="w-full"
+              size="lg"
+              variant="outline"
+              onClick={() => setShowJoinModal(true)}
+            >
+              Join Group Pact
+            </Button>
+          )}
+
+          {canChallenge && (
+            <Button
+              className="w-full"
+              size="lg"
+              variant="outline"
+              onClick={() => setShowChallengeModal(true)}
+            >
+              Challenge Pact
+            </Button>
+          )}
+
           {canResolve && (
             <Link href={`/resolve?pact=${id}`}>
               <Button className="w-full" size="lg">
                 Resolve Pact
               </Button>
             </Link>
+          )}
+
+          {pact.challenge && (
+            <Card className="border-[#F26B3A] p-4">
+              <p className="text-xs text-[#8E9094] mb-2">Challenge Active</p>
+              <p className="text-sm font-bold">
+                {(pact.challenge.challengeStake / 100_000_000).toFixed(2)} MOVE
+                at stake
+              </p>
+            </Card>
           )}
 
           <div className="space-y-2 mt-4">
@@ -308,6 +631,122 @@ export default function PactDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* Challenge Modal */}
+      {showChallengeModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <Card className="max-w-md w-full mx-4 border-[#F26B3A]">
+            <div className="p-6 space-y-4">
+              <h3 className="text-xl font-bold">Challenge Pact</h3>
+              <p className="text-sm text-[#8E9094]">
+                Stake against this pact. If the creator fails, you win their
+                stake. If they succeed, they win your stake.
+              </p>
+              <div>
+                <label className="text-sm uppercase font-bold tracking-widest text-[#8E9094] block mb-2">
+                  Challenge Stake (MOVE)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  className="w-full bg-[#15171C] border border-[#23262F] p-3 text-white focus:outline-none focus:border-[#F26B3A]"
+                  placeholder="0.01"
+                  value={challengeAmount}
+                  onChange={(e) => setChallengeAmount(e.target.value)}
+                />
+                <p className="text-xs text-[#8E9094] mt-1">
+                  Minimum: 0.01 MOVE
+                </p>
+              </div>
+              {error && (
+                <div className="bg-red-500/10 border border-red-500/50 text-red-400 p-3 text-sm rounded">
+                  {error}
+                </div>
+              )}
+              <div className="flex gap-3">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => {
+                    setShowChallengeModal(false);
+                    setChallengeAmount("");
+                    setError(null);
+                  }}
+                  disabled={isChallenging}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  className="flex-1"
+                  onClick={handleChallenge}
+                  disabled={isChallenging || !challengeAmount}
+                >
+                  {isChallenging ? "Challenging..." : "Challenge"}
+                </Button>
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* Join Group Modal */}
+      {showJoinModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <Card className="max-w-md w-full mx-4 border-[#4FD1C5]">
+            <div className="p-6 space-y-4">
+              <h3 className="text-xl font-bold">Join Group Pact</h3>
+              <p className="text-sm text-[#8E9094]">
+                Join this group pact. All members must hold their balance. If
+                one breaks, their stake is redistributed or burned.
+              </p>
+              <div>
+                <label className="text-sm uppercase font-bold tracking-widest text-[#8E9094] block mb-2">
+                  Your Stake (MOVE)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  className="w-full bg-[#15171C] border border-[#23262F] p-3 text-white focus:outline-none focus:border-[#4FD1C5]"
+                  placeholder="0.01"
+                  value={joinStake}
+                  onChange={(e) => setJoinStake(e.target.value)}
+                />
+                <p className="text-xs text-[#8E9094] mt-1">
+                  Minimum: 0.01 MOVE
+                </p>
+              </div>
+              {error && (
+                <div className="bg-red-500/10 border border-red-500/50 text-red-400 p-3 text-sm rounded">
+                  {error}
+                </div>
+              )}
+              <div className="flex gap-3">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => {
+                    setShowJoinModal(false);
+                    setJoinStake("");
+                    setError(null);
+                  }}
+                  disabled={isJoining}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  className="flex-1"
+                  onClick={handleJoinGroup}
+                  disabled={isJoining || !joinStake}
+                >
+                  {isJoining ? "Joining..." : "Join"}
+                </Button>
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

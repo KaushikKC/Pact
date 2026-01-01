@@ -4,7 +4,7 @@ import { useWallet as useAptosWallet } from "@aptos-labs/wallet-adapter-react";
 
 // TODO: Update this with your deployed module address
 const MODULE_ADDRESS =
-  "0x0ded5b8d5d47739ce0022d24bd2d20f32eb97dcdc1dd2db583f4cc5e608c4794";
+  "0x96920ee8aff1d21b7b877a7e92dda4df95eb8047acedfce018aab5c6b12da3a2";
 
 export interface CreatePactParams {
   tokenAddress: string;

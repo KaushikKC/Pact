@@ -10,7 +10,7 @@ import { MOVEMENT_CONFIGS, CURRENT_NETWORK } from "./aptos";
 
 // Contract address - update this with your deployed module address
 export const CONTRACT_ADDRESS =
-  "0x0ded5b8d5d47739ce0022d24bd2d20f32eb97dcdc1dd2db583f4cc5e608c4794";
+  "0x96920ee8aff1d21b7b877a7e92dda4df95eb8047acedfce018aab5c6b12da3a2";
 
 export interface CreatePactParams {
   tokenAddress: string;
@@ -316,7 +316,28 @@ export const fetchPact = async (
       },
     });
 
-    const [tokenAddress, startBalance, stakeAmount, deadline, status] = result;
+    const [
+      tokenAddress,
+      startBalance,
+      stakeAmount,
+      deadline,
+      status,
+      isGroup,
+      maxGroupSize,
+      challengeStake,
+    ] = result;
+
+    // Fetch challenge and group members if needed
+    let challenge = null;
+    let groupMembers: string[] = [];
+
+    if (Number(challengeStake) > 0) {
+      challenge = await getChallenge(creatorAddress, pactIndex);
+    }
+
+    if (isGroup) {
+      groupMembers = await getGroupMembers(creatorAddress, pactIndex);
+    }
 
     return {
       tokenAddress: tokenAddress?.toString() || "",
@@ -326,6 +347,10 @@ export const fetchPact = async (
       status: Number(status), // 0=ACTIVE, 1=PASSED, 2=FAILED
       creator: creatorAddress,
       index: pactIndex,
+      isGroup: Boolean(isGroup),
+      maxGroupSize: Number(maxGroupSize),
+      challenge,
+      groupMembers,
     };
   } catch (error) {
     console.error("Error fetching pact:", error);
@@ -382,16 +407,20 @@ export const getResolvePactFunction = (): `${string}::${string}::${string}` => {
  * Resolve a pact after the deadline
  * @param creatorAddress - Address of the pact creator
  * @param pactIndex - Index of the pact
- * @param currentBalance - Current balance of the tracked token
+ * @param currentBalance - Current balance of the tracked token (for solo pacts) or array of balances (for group pacts)
  * @param walletAddress - Address of the resolver (anyone can resolve)
  * @param signAndSubmitTransaction - Function to sign and submit transaction
+ * @param isGroupPact - Whether this is a group pact
+ * @param memberBalances - Array of balances for each group member (required for group pacts)
  */
 export const submitResolvePactTransaction = async (
   creatorAddress: string,
   pactIndex: number,
-  currentBalance: number,
+  currentBalance: number | number[],
   walletAddress: string,
-  signAndSubmitTransaction: any
+  signAndSubmitTransaction: any,
+  isGroupPact: boolean = false,
+  memberBalances: number[] = []
 ): Promise<string> => {
   try {
     console.log("[Pact Transaction] Starting resolve_pact transaction:", {
@@ -399,14 +428,33 @@ export const submitResolvePactTransaction = async (
       pactIndex,
       currentBalance,
       walletAddress,
+      isGroupPact,
+      memberBalances,
     });
+
+    // For group pacts, use member balances; for solo pacts, use currentBalance as single value
+    const balanceArg = isGroupPact
+      ? Array.isArray(currentBalance)
+        ? currentBalance
+        : memberBalances
+      : currentBalance;
+    const memberBalancesArg = isGroupPact
+      ? Array.isArray(balanceArg)
+        ? balanceArg
+        : memberBalances
+      : [];
 
     const response = await signAndSubmitTransaction({
       sender: walletAddress,
       data: {
         function: getResolvePactFunction(),
         typeArguments: [],
-        functionArguments: [creatorAddress, pactIndex, currentBalance],
+        functionArguments: [
+          creatorAddress,
+          pactIndex,
+          isGroupPact ? 0 : typeof balanceArg === "number" ? balanceArg : 0, // For group pacts, pass 0 as currentBalance
+          memberBalancesArg, // member_balances array
+        ],
       },
     });
 
@@ -429,6 +477,261 @@ export const submitResolvePactTransaction = async (
   } catch (error) {
     console.error("Error resolving pact:", error);
     throw error;
+  }
+};
+
+/**
+ * Challenge a pact by staking against it
+ * @param creatorAddress - Address of the pact creator
+ * @param pactIndex - Index of the pact
+ * @param challengeStake - Amount to stake as challenge (in octas)
+ * @param walletAddress - Address of the challenger
+ * @param signAndSubmitTransaction - Function to sign and submit transaction
+ */
+export const submitChallengePactTransaction = async (
+  creatorAddress: string,
+  pactIndex: number,
+  challengeStake: number,
+  walletAddress: string,
+  signAndSubmitTransaction: any
+): Promise<string> => {
+  try {
+    console.log("[Pact Transaction] Starting challenge_pact transaction:", {
+      creatorAddress,
+      pactIndex,
+      challengeStake,
+      walletAddress,
+    });
+
+    const response = await signAndSubmitTransaction({
+      sender: walletAddress,
+      data: {
+        function: `${CONTRACT_ADDRESS}::pact::challenge_pact`,
+        typeArguments: [],
+        functionArguments: [creatorAddress, pactIndex, challengeStake],
+      },
+    });
+
+    console.log(
+      "[Pact Transaction] Challenge transaction submitted:",
+      response.hash
+    );
+
+    const executed = await aptos.waitForTransaction({
+      transactionHash: response.hash,
+    });
+
+    if (!executed.success) {
+      throw new Error("Transaction failed");
+    }
+
+    console.log("[Pact Transaction] Pact challenged successfully");
+
+    return response.hash;
+  } catch (error) {
+    console.error("Error challenging pact:", error);
+    throw error;
+  }
+};
+
+/**
+ * Create a group pact
+ * @param params - Group pact creation parameters
+ * @param walletAddress - Address of the creator
+ * @param signAndSubmitTransaction - Function to sign and submit transaction
+ */
+export const submitCreateGroupPactTransaction = async (
+  params: CreatePactParams & { maxGroupSize: number },
+  walletAddress: string,
+  signAndSubmitTransaction: any
+): Promise<string> => {
+  try {
+    console.log("[Pact Transaction] Starting create_group_pact transaction:", {
+      ...params,
+      walletAddress,
+    });
+
+    const response = await signAndSubmitTransaction({
+      sender: walletAddress,
+      data: {
+        function: `${CONTRACT_ADDRESS}::pact::create_group_pact`,
+        typeArguments: [],
+        functionArguments: [
+          AccountAddress.fromString(params.tokenAddress),
+          params.startBalance,
+          params.stakeAmount,
+          params.deadlineSeconds,
+          params.maxGroupSize,
+        ],
+      },
+    });
+
+    console.log(
+      "[Pact Transaction] Group pact creation submitted:",
+      response.hash
+    );
+
+    const executed = await aptos.waitForTransaction({
+      transactionHash: response.hash,
+    });
+
+    if (!executed.success) {
+      throw new Error("Transaction failed");
+    }
+
+    console.log("[Pact Transaction] Group pact created successfully");
+
+    return response.hash;
+  } catch (error) {
+    console.error("Error creating group pact:", error);
+    throw error;
+  }
+};
+
+/**
+ * Join a group pact
+ * @param creatorAddress - Address of the pact creator
+ * @param pactIndex - Index of the pact
+ * @param stakeAmount - Amount to stake (in octas)
+ * @param startBalance - Current balance of the tracked token
+ * @param walletAddress - Address of the member joining
+ * @param signAndSubmitTransaction - Function to sign and submit transaction
+ */
+export const submitJoinGroupPactTransaction = async (
+  creatorAddress: string,
+  pactIndex: number,
+  stakeAmount: number,
+  startBalance: number,
+  walletAddress: string,
+  signAndSubmitTransaction: any
+): Promise<string> => {
+  try {
+    console.log("[Pact Transaction] Starting join_group_pact transaction:", {
+      creatorAddress,
+      pactIndex,
+      stakeAmount,
+      startBalance,
+      walletAddress,
+    });
+
+    const response = await signAndSubmitTransaction({
+      sender: walletAddress,
+      data: {
+        function: `${CONTRACT_ADDRESS}::pact::join_group_pact`,
+        typeArguments: [],
+        functionArguments: [
+          creatorAddress,
+          pactIndex,
+          stakeAmount,
+          startBalance,
+        ],
+      },
+    });
+
+    console.log(
+      "[Pact Transaction] Join group pact transaction submitted:",
+      response.hash
+    );
+
+    const executed = await aptos.waitForTransaction({
+      transactionHash: response.hash,
+    });
+
+    if (!executed.success) {
+      throw new Error("Transaction failed");
+    }
+
+    console.log("[Pact Transaction] Joined group pact successfully");
+
+    return response.hash;
+  } catch (error) {
+    console.error("Error joining group pact:", error);
+    throw error;
+  }
+};
+
+/**
+ * Get challenge details for a pact
+ */
+export const getChallenge = async (
+  creatorAddress: string,
+  pactIndex: number
+): Promise<{ challenger: string; challengeStake: number } | null> => {
+  try {
+    const result = await aptos.view({
+      payload: {
+        function: `${CONTRACT_ADDRESS}::pact::get_challenge`,
+        typeArguments: [],
+        functionArguments: [creatorAddress, pactIndex],
+      },
+    });
+
+    const [challenger, challengeStake] = result;
+
+    if (challenger === "0x0" || Number(challengeStake) === 0) {
+      return null;
+    }
+
+    return {
+      challenger: challenger?.toString() || "",
+      challengeStake: Number(challengeStake),
+    };
+  } catch (error) {
+    console.error("Error fetching challenge:", error);
+    return null;
+  }
+};
+
+/**
+ * Get group members for a group pact
+ */
+export const getGroupMembers = async (
+  creatorAddress: string,
+  pactIndex: number
+): Promise<string[]> => {
+  try {
+    const result = await aptos.view({
+      payload: {
+        function: `${CONTRACT_ADDRESS}::pact::get_group_members`,
+        typeArguments: [],
+        functionArguments: [creatorAddress, pactIndex],
+      },
+    });
+
+    console.log("[Pact Transaction] get_group_members raw result:", result);
+
+    // Handle different response formats
+    if (Array.isArray(result)) {
+      // If result is already an array
+      return result.map((addr: any) => {
+        const addrStr = addr?.toString() || String(addr || "");
+        // Remove any URL encoding
+        return decodeURIComponent(addrStr);
+      });
+    } else if (typeof result === "string") {
+      // If result is a string (comma-separated or URL-encoded)
+      const decoded = decodeURIComponent(result);
+      // Split by comma if it contains multiple addresses
+      if (decoded.includes(",")) {
+        return decoded.split(",").map((addr) => addr.trim());
+      }
+      return [decoded];
+    } else if (result && typeof result === "object") {
+      // If result is an object with array property
+      const arr = (result as any)[0] || result;
+      if (Array.isArray(arr)) {
+        return arr.map((addr: any) => {
+          const addrStr = addr?.toString() || String(addr || "");
+          return decodeURIComponent(addrStr);
+        });
+      }
+    }
+
+    console.warn("[Pact Transaction] Unexpected group members format:", result);
+    return [];
+  } catch (error) {
+    console.error("Error fetching group members:", error);
+    return [];
   }
 };
 

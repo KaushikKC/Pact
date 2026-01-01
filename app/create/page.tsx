@@ -8,6 +8,7 @@ import { Card } from "../components/ui/card";
 import { useWallet } from "../contexts/WalletContext";
 import {
   submitCreatePactTransaction,
+  submitCreateGroupPactTransaction,
   initializeProtocol,
   isProtocolInitialized,
   CreatePactParams,
@@ -28,6 +29,8 @@ export default function CreatePactPage() {
     deadline: "", // Deadline timestamp (UNTIL WHEN)
     stake: 0, // Stake amount (SKIN IN THE GAME)
     statement: "", // Optional: Intent statement (for display only)
+    isGroupPact: false, // Is this a group pact?
+    maxGroupSize: 3, // Maximum group size
   });
   const [currentBalance, setCurrentBalance] = useState<number | null>(null);
 
@@ -47,7 +50,7 @@ export default function CreatePactPage() {
       // Always try to initialize if user is deployer (idempotent - safe to call multiple times)
       // The deployer address is the contract address itself
       const deployerAddress =
-        "0x0ded5b8d5d47739ce0022d24bd2d20f32eb97dcdc1dd2db583f4cc5e608c4794";
+        "0x96920ee8aff1d21b7b877a7e92dda4df95eb8047acedfce018aab5c6b12da3a2";
 
       if (address.toLowerCase() === deployerAddress.toLowerCase()) {
         // User is the deployer, try to initialize (safe to call even if already initialized)
@@ -183,11 +186,20 @@ export default function CreatePactPage() {
       }
 
       // Submit transaction
-      const txHash = await submitCreatePactTransaction(
-        params,
-        address,
-        signAndSubmitTransaction
-      );
+      let txHash: string;
+      if (formData.isGroupPact) {
+        txHash = await submitCreateGroupPactTransaction(
+          { ...params, maxGroupSize: formData.maxGroupSize },
+          address,
+          signAndSubmitTransaction
+        );
+      } else {
+        txHash = await submitCreatePactTransaction(
+          params,
+          address,
+          signAndSubmitTransaction
+        );
+      }
 
       console.log("[Create Pact] Transaction successful:", txHash);
 
@@ -270,7 +282,75 @@ export default function CreatePactPage() {
           {step === 1 && (
             <div className="space-y-6">
               <div className="mb-8">
-                <h3 className="text-xl font-bold mb-2">1️⃣ Asset (WHAT)</h3>
+                <h3 className="text-xl font-bold mb-2">1️⃣ Pact Type</h3>
+                <p className="text-sm text-[#8E9094] mb-4">
+                  Choose between a solo pact or a group pact where multiple
+                  users join together.
+                </p>
+              </div>
+              <div className="space-y-4">
+                <label className="flex items-center gap-3 p-4 border border-[#23262F] rounded cursor-pointer hover:border-[#F26B3A] transition-colors">
+                  <input
+                    type="radio"
+                    name="pactType"
+                    checked={!formData.isGroupPact}
+                    onChange={() =>
+                      setFormData({ ...formData, isGroupPact: false })
+                    }
+                    className="w-4 h-4"
+                  />
+                  <div>
+                    <p className="font-bold">Solo Pact</p>
+                    <p className="text-xs text-[#8E9094]">
+                      Individual commitment
+                    </p>
+                  </div>
+                </label>
+                <label className="flex items-center gap-3 p-4 border border-[#23262F] rounded cursor-pointer hover:border-[#F26B3A] transition-colors">
+                  <input
+                    type="radio"
+                    name="pactType"
+                    checked={formData.isGroupPact}
+                    onChange={() =>
+                      setFormData({ ...formData, isGroupPact: true })
+                    }
+                    className="w-4 h-4"
+                  />
+                  <div>
+                    <p className="font-bold">Group Pact</p>
+                    <p className="text-xs text-[#8E9094]">
+                      Multiple users join the same pact
+                    </p>
+                  </div>
+                </label>
+              </div>
+              {formData.isGroupPact && (
+                <div>
+                  <label className="block">
+                    <span className="text-sm uppercase font-bold tracking-widest text-[#8E9094] mb-2 block">
+                      Maximum Group Size
+                    </span>
+                    <input
+                      type="number"
+                      min="2"
+                      max="10"
+                      className="w-full bg-[#15171C] border border-[#23262F] p-4 text-white focus:outline-none focus:border-[#F26B3A]"
+                      value={formData.maxGroupSize}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          maxGroupSize: Number(e.target.value),
+                        })
+                      }
+                    />
+                    <p className="text-xs text-[#8E9094] mt-1">
+                      How many members can join (including you)
+                    </p>
+                  </label>
+                </div>
+              )}
+              <div className="mb-8">
+                <h3 className="text-xl font-bold mb-2">Asset (WHAT)</h3>
                 <p className="text-sm text-[#8E9094] mb-4">
                   Enter the token address you want to track. This is the token
                   you commit to hold.
@@ -549,11 +629,25 @@ export default function CreatePactPage() {
                         {formData.stake} MOVE
                       </p>
                       <p className="text-xs text-[#8E9094] mt-1">
-                        If balance drops below {formData.minimumBalance} MOVE at
-                        deadline, this stake will be slashed (90% returned, 10%
-                        protocol fee)
+                        {formData.isGroupPact
+                          ? `Group pact: If any member breaks, their stake is redistributed or burned. Max group size: ${formData.maxGroupSize}`
+                          : `If balance drops below ${formData.minimumBalance} MOVE at deadline, this stake will be slashed (90% returned, 10% protocol fee)`}
                       </p>
                     </div>
+                    {formData.isGroupPact && (
+                      <div>
+                        <span className="text-[10px] uppercase font-bold tracking-widest text-[#8E9094] block mb-1">
+                          5. Group Pact Settings
+                        </span>
+                        <p className="text-sm">
+                          Maximum Group Size: {formData.maxGroupSize} members
+                        </p>
+                        <p className="text-xs text-[#8E9094] mt-1">
+                          Other users can join this pact after creation. All
+                          members must hold their balance or face penalties.
+                        </p>
+                      </div>
+                    )}
                   </div>
                 </div>
               </Card>

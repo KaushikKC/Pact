@@ -25,6 +25,8 @@ interface Pact {
   deadline: number;
   status: PactStatus;
   creator: string;
+  isGroup?: boolean;
+  groupMembers?: string[];
 }
 
 function ResolvePactPageContent() {
@@ -35,6 +37,7 @@ function ResolvePactPageContent() {
   const [isLoading, setIsLoading] = useState(true);
   const [selectedPact, setSelectedPact] = useState<Pact | null>(null);
   const [currentBalance, setCurrentBalance] = useState<number | null>(null);
+  const [memberBalances, setMemberBalances] = useState<number[]>([]);
   const [resolving, setResolving] = useState(false);
   const [result, setResult] = useState<"SUCCESS" | "FAILURE" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -69,6 +72,8 @@ function ResolvePactPageContent() {
             deadline: pact.deadline,
             status: "ACTIVE" as PactStatus,
             creator: pact.creator,
+            isGroup: pact.isGroup || false,
+            groupMembers: pact.groupMembers || [],
           }));
 
         setPacts(activePactsData);
@@ -101,10 +106,20 @@ function ResolvePactPageContent() {
   // Load current balance for selected pact
   const loadBalanceForPact = async (pact: Pact) => {
     try {
-      // For MVP, we're tracking MOVE balance
-      // In production, you'd fetch the balance of the specific token
-      const balance = await getCurrentBalance(pact.creator);
-      setCurrentBalance(balance);
+      if (pact.isGroup && pact.groupMembers && pact.groupMembers.length > 0) {
+        // For group pacts, fetch balances for all members
+        const balances = await Promise.all(
+          pact.groupMembers.map((member) => getCurrentBalance(member))
+        );
+        setMemberBalances(balances);
+        setCurrentBalance(null); // Not used for group pacts
+        console.log("[Resolve Page] Group pact member balances:", balances);
+      } else {
+        // For solo pacts, fetch balance for creator
+        const balance = await getCurrentBalance(pact.creator);
+        setCurrentBalance(balance);
+        setMemberBalances([]);
+      }
     } catch (err: any) {
       console.error("Error loading balance:", err);
       setError("Failed to load current balance");
@@ -119,14 +134,22 @@ function ResolvePactPageContent() {
   };
 
   const handleResolve = async () => {
-    if (
-      !selectedPact ||
-      !address ||
-      !signAndSubmitTransaction ||
-      currentBalance === null
-    ) {
+    if (!selectedPact || !address || !signAndSubmitTransaction) {
       setError("Missing required information to resolve pact");
       return;
+    }
+
+    // Validate balances based on pact type
+    if (selectedPact.isGroup) {
+      if (memberBalances.length === 0 || memberBalances.length !== (selectedPact.groupMembers?.length || 0)) {
+        setError("Missing member balances for group pact");
+        return;
+      }
+    } else {
+      if (currentBalance === null) {
+        setError("Missing current balance");
+        return;
+      }
     }
 
     setResolving(true);
@@ -141,13 +164,26 @@ function ResolvePactPageContent() {
       const txHash = await submitResolvePactTransaction(
         creatorAddress,
         index,
-        currentBalance,
+        selectedPact.isGroup ? memberBalances : currentBalance,
         address,
-        signAndSubmitTransaction
+        signAndSubmitTransaction,
+        selectedPact.isGroup || false,
+        memberBalances
       );
 
       // Determine result based on balance comparison
-      const passed = currentBalance >= selectedPact.startBalance;
+      // For group pacts, all members must pass; for solo pacts, just check creator
+      let passed = false;
+      if (selectedPact.isGroup && memberBalances.length > 0) {
+        // All members must maintain their start balance
+        passed = memberBalances.every((balance, index) => {
+          // For group pacts, we'd need to check each member's start balance
+          // For now, assume all members have the same start balance requirement
+          return balance >= selectedPact.startBalance;
+        });
+      } else if (currentBalance !== null) {
+        passed = currentBalance >= selectedPact.startBalance;
+      }
       setResult(passed ? "SUCCESS" : "FAILURE");
 
       // Refresh pacts list
