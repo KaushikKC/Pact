@@ -8,6 +8,10 @@ import {
 import { aptos } from "./wallet";
 import { MOVEMENT_CONFIGS, CURRENT_NETWORK } from "./aptos";
 
+// Type for sign and submit transaction function
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type SignAndSubmitTransaction = (transaction: any) => Promise<{ hash: string }>;
+
 // Contract address - update this with your deployed module address
 export const CONTRACT_ADDRESS =
   "0x96920ee8aff1d21b7b877a7e92dda4df95eb8047acedfce018aab5c6b12da3a2";
@@ -159,7 +163,7 @@ export const submitCreatePactTransactionPrivy = async (
  */
 export const initializeProtocol = async (
   walletAddress: string,
-  signAndSubmitTransaction: any
+  signAndSubmitTransaction: SignAndSubmitTransaction
 ): Promise<string> => {
   try {
     console.log("[Pact Transaction] Initializing protocol...");
@@ -186,7 +190,7 @@ export const initializeProtocol = async (
     });
 
     if (!executed.success) {
-      const errorDetails = executed as any;
+      const errorDetails = executed as { vm_status?: string };
       throw new Error(
         `Transaction failed: ${errorDetails.vm_status || "Unknown error"}`
       );
@@ -195,10 +199,11 @@ export const initializeProtocol = async (
     console.log("[Pact Transaction] Protocol initialized successfully");
 
     return response.hash;
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Error initializing protocol:", error);
     // Re-throw with more context
-    const errorMsg = error?.message || error?.toString() || "Unknown error";
+    const errorMsg =
+      error instanceof Error ? error.message : String(error || "Unknown error");
     throw new Error(`Failed to initialize protocol: ${errorMsg}`);
   }
 };
@@ -225,9 +230,10 @@ export const isProtocolInitialized = async (): Promise<boolean> => {
       result
     );
     return true;
-  } catch (error: any) {
+  } catch (error: unknown) {
     // If we get an error accessing the registry, it's not initialized
-    const errorMessage = error?.message || error?.toString() || "";
+    const errorMessage =
+      error instanceof Error ? error.message : String(error || "");
     console.log("[Pact Transaction] Protocol check error:", errorMessage);
 
     // Check for initialization errors
@@ -254,7 +260,7 @@ export const isProtocolInitialized = async (): Promise<boolean> => {
 export const submitCreatePactTransaction = async (
   params: CreatePactParams,
   walletAddress: string,
-  signAndSubmitTransaction: any
+  signAndSubmitTransaction: SignAndSubmitTransaction
 ): Promise<string> => {
   try {
     console.log("[Pact Transaction] Starting create_pact transaction:", {
@@ -303,10 +309,25 @@ export const submitCreatePactTransaction = async (
 /**
  * Fetch a single pact by creator address and index
  */
+export interface PactData {
+  tokenAddress: string;
+  startBalance: number;
+  stakeAmount: number;
+  deadline: number;
+  status: number;
+  creator: string;
+  index: number;
+  isGroup: boolean;
+  maxGroupSize: number;
+  challenge: { challenger: string; challengeStake: number } | null;
+  groupMembers: string[];
+  trendingScore?: number; // Optional, added by getTrendingPacts
+}
+
 export const fetchPact = async (
   creatorAddress: string,
   pactIndex: number
-): Promise<any | null> => {
+): Promise<PactData | null> => {
   try {
     const result = await aptos.view({
       payload: {
@@ -337,6 +358,39 @@ export const fetchPact = async (
 
     if (isGroup) {
       groupMembers = await getGroupMembers(creatorAddress, pactIndex);
+
+      // Post-process to ensure all members are individual addresses
+      // Sometimes addresses come concatenated, so we need to split them
+      const processedMembers: string[] = [];
+      for (const member of groupMembers) {
+        // Check if member contains multiple addresses (comma or URL-encoded comma)
+        if (member.includes("%2C") || member.includes(",")) {
+          // Split and add each address
+          const decoded = decodeURIComponent(member);
+          const addresses = decoded
+            .replace(/%2C/gi, ",")
+            .split(",")
+            .map((a) => a.trim())
+            .filter((a) => a.startsWith("0x") && a.length > 10);
+          processedMembers.push(...addresses);
+        } else {
+          // Single address
+          const trimmed = member.trim();
+          if (trimmed.startsWith("0x") && trimmed.length > 10) {
+            processedMembers.push(trimmed);
+          }
+        }
+      }
+
+      // Remove duplicates and ensure valid addresses
+      groupMembers = Array.from(new Set(processedMembers)).filter(
+        (addr) => addr.startsWith("0x") && addr.length >= 10
+      );
+
+      console.log(
+        "[Pact Transaction] Final processed group members:",
+        groupMembers
+      );
     }
 
     return {
@@ -361,7 +415,9 @@ export const fetchPact = async (
 /**
  * Fetch all pacts for a user
  */
-export const fetchUserPacts = async (userAddress: string): Promise<any[]> => {
+export const fetchUserPacts = async (
+  userAddress: string
+): Promise<PactData[]> => {
   try {
     // Get pact count
     const countResponse = await aptos.view({
@@ -418,7 +474,7 @@ export const submitResolvePactTransaction = async (
   pactIndex: number,
   currentBalance: number | number[],
   walletAddress: string,
-  signAndSubmitTransaction: any,
+  signAndSubmitTransaction: SignAndSubmitTransaction,
   isGroupPact: boolean = false,
   memberBalances: number[] = []
 ): Promise<string> => {
@@ -493,7 +549,7 @@ export const submitChallengePactTransaction = async (
   pactIndex: number,
   challengeStake: number,
   walletAddress: string,
-  signAndSubmitTransaction: any
+  signAndSubmitTransaction: SignAndSubmitTransaction
 ): Promise<string> => {
   try {
     console.log("[Pact Transaction] Starting challenge_pact transaction:", {
@@ -543,7 +599,7 @@ export const submitChallengePactTransaction = async (
 export const submitCreateGroupPactTransaction = async (
   params: CreatePactParams & { maxGroupSize: number },
   walletAddress: string,
-  signAndSubmitTransaction: any
+  signAndSubmitTransaction: SignAndSubmitTransaction
 ): Promise<string> => {
   try {
     console.log("[Pact Transaction] Starting create_group_pact transaction:", {
@@ -603,7 +659,7 @@ export const submitJoinGroupPactTransaction = async (
   stakeAmount: number,
   startBalance: number,
   walletAddress: string,
-  signAndSubmitTransaction: any
+  signAndSubmitTransaction: SignAndSubmitTransaction
 ): Promise<string> => {
   try {
     console.log("[Pact Transaction] Starting join_group_pact transaction:", {
@@ -699,31 +755,115 @@ export const getGroupMembers = async (
     });
 
     console.log("[Pact Transaction] get_group_members raw result:", result);
+    console.log("[Pact Transaction] Result type:", typeof result);
+    console.log("[Pact Transaction] Is array:", Array.isArray(result));
+    console.log(
+      "[Pact Transaction] Result stringified:",
+      JSON.stringify(result)
+    );
+
+    // Helper function to parse a single address string (may contain multiple addresses)
+    const parseAddressString = (addrStr: string): string[] => {
+      // First, try URL decoding
+      let decoded = addrStr;
+      try {
+        decoded = decodeURIComponent(addrStr);
+      } catch {
+        // If decode fails, use original
+        decoded = addrStr;
+      }
+
+      // Check if it contains comma (URL-encoded %2C or regular comma)
+      if (decoded.includes("%2C") || decoded.includes(",")) {
+        // Split by both URL-encoded and regular comma
+        const addresses = decoded
+          .replace(/%2C/gi, ",") // Replace URL-encoded commas
+          .split(",")
+          .map((a) => a.trim())
+          .filter((a) => a.length > 0 && a !== "0x0" && a.startsWith("0x"));
+        return addresses;
+      }
+
+      // Single address
+      if (
+        decoded &&
+        decoded.length > 0 &&
+        decoded !== "0x0" &&
+        decoded.startsWith("0x")
+      ) {
+        return [decoded];
+      }
+
+      return [];
+    };
 
     // Handle different response formats
     if (Array.isArray(result)) {
       // If result is already an array
-      return result.map((addr: any) => {
-        const addrStr = addr?.toString() || String(addr || "");
-        // Remove any URL encoding
-        return decodeURIComponent(addrStr);
-      });
+      const members: string[] = [];
+      for (const item of result) {
+        let addrStr = "";
+
+        // Handle different item types
+        if (typeof item === "string") {
+          addrStr = item;
+        } else if (item && typeof item === "object") {
+          // Try to get string representation
+          if ("toString" in item && typeof item.toString === "function") {
+            addrStr = item.toString();
+          } else {
+            addrStr = JSON.stringify(item);
+          }
+        } else {
+          addrStr = String(item || "");
+        }
+
+        // Parse the address string (may contain multiple addresses)
+        const parsed = parseAddressString(addrStr);
+        members.push(...parsed);
+      }
+
+      // Remove duplicates
+      const uniqueMembers = Array.from(new Set(members));
+      console.log("[Pact Transaction] Parsed members:", uniqueMembers);
+      return uniqueMembers;
     } else if (typeof result === "string") {
       // If result is a string (comma-separated or URL-encoded)
-      const decoded = decodeURIComponent(result);
-      // Split by comma if it contains multiple addresses
-      if (decoded.includes(",")) {
-        return decoded.split(",").map((addr) => addr.trim());
-      }
-      return [decoded];
+      const addresses = parseAddressString(result);
+      console.log("[Pact Transaction] Parsed members from string:", addresses);
+      return addresses;
     } else if (result && typeof result === "object") {
-      // If result is an object with array property
-      const arr = (result as any)[0] || result;
-      if (Array.isArray(arr)) {
-        return arr.map((addr: any) => {
-          const addrStr = addr?.toString() || String(addr || "");
-          return decodeURIComponent(addrStr);
-        });
+      // If result is an object, try to extract array or convert to string
+      const resultObj = result as Record<string, unknown>;
+
+      // Try to find an array in the object
+      for (const key in resultObj) {
+        if (Array.isArray(resultObj[key])) {
+          const arr = resultObj[key] as unknown[];
+          const members: string[] = [];
+          for (const item of arr) {
+            const addrStr = String(item || "");
+            const parsed = parseAddressString(addrStr);
+            members.push(...parsed);
+          }
+          const uniqueMembers = Array.from(new Set(members));
+          console.log(
+            "[Pact Transaction] Parsed members from object:",
+            uniqueMembers
+          );
+          return uniqueMembers;
+        }
+      }
+
+      // If no array found, try to convert the whole object to string
+      const objStr = JSON.stringify(result);
+      const addresses = parseAddressString(objStr);
+      if (addresses.length > 0) {
+        console.log(
+          "[Pact Transaction] Parsed members from object string:",
+          addresses
+        );
+        return addresses;
       }
     }
 
@@ -756,7 +896,7 @@ export const getCurrentBalance = async (address: string): Promise<number> => {
  * Fetch all pacts from all users by querying events
  * Note: This uses the REST API directly since the SDK doesn't have a direct method
  */
-export const fetchAllPacts = async (): Promise<any[]> => {
+export const fetchAllPacts = async (): Promise<PactData[]> => {
   try {
     console.log("[Pact Transaction] Fetching all pacts from events...");
 
@@ -811,11 +951,15 @@ export const fetchAllPacts = async (): Promise<any[]> => {
     // Extract unique creator addresses
     const creatorSet = new Set<string>();
 
-    events.forEach((event: any) => {
+    events.forEach((event: unknown) => {
       // Event data structure: { data: { creator, pact_id, ... }, ... }
-      const data = event.data || event;
-      if (data && data.creator) {
-        const creator = String(data.creator);
+      const eventData = event as {
+        data?: { creator?: string | number };
+        creator?: string | number;
+      };
+      const data = eventData.data || eventData;
+      if (data && (data as { creator?: string | number }).creator) {
+        const creator = String((data as { creator: string | number }).creator);
         creatorSet.add(creator);
         console.log(`[Pact Transaction] Found creator: ${creator}`);
       }
@@ -831,7 +975,7 @@ export const fetchAllPacts = async (): Promise<any[]> => {
     }
 
     // Fetch all pacts from all creators
-    const allPacts: any[] = [];
+    const allPacts: PactData[] = [];
 
     for (const creator of creatorSet) {
       try {
@@ -873,12 +1017,13 @@ export const fetchAllPacts = async (): Promise<any[]> => {
 
     console.log(`[Pact Transaction] Fetched ${allPacts.length} total pacts`);
     return allPacts;
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Error fetching all pacts:", error);
-    console.error("Error details:", {
-      message: error?.message,
-      stack: error?.stack,
-    });
+    const errorDetails =
+      error instanceof Error
+        ? { message: error.message, stack: error.stack }
+        : {};
+    console.error("Error details:", errorDetails);
     // Fallback: return empty array
     return [];
   }
@@ -887,7 +1032,9 @@ export const fetchAllPacts = async (): Promise<any[]> => {
 /**
  * Get trending pacts (sorted by stake amount, recency, and activity)
  */
-export const getTrendingPacts = async (limit: number = 10): Promise<any[]> => {
+export const getTrendingPacts = async (
+  limit: number = 10
+): Promise<PactData[]> => {
   try {
     const allPacts = await fetchAllPacts();
     const now = Math.floor(Date.now() / 1000);

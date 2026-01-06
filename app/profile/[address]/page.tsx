@@ -190,7 +190,7 @@ export default function UserProfilePage() {
             <span className="text-[10px] uppercase font-bold tracking-widest text-[#8E9094] block mb-2">
               Total Staked
             </span>
-            <span className="text-2xl font-bold text-[#4FD1C5]">
+            <span className="text-2xl font-bold text-[#4FD1C5] mr-2">
               {(stats.totalStaked / 100_000_000).toFixed(2)}
             </span>
             <span className="text-xs text-[#8E9094]">MOVE</span>
@@ -199,7 +199,7 @@ export default function UserProfilePage() {
             <span className="text-[10px] uppercase font-bold tracking-widest text-[#8E9094] block mb-2">
               Resolved
             </span>
-            <span className="text-2xl font-bold">
+            <span className="text-2xl font-bold mr-2">
               {stats.passedPacts + stats.failedPacts}
             </span>
             <span className="text-xs text-[#8E9094]">

@@ -319,13 +319,16 @@ export default function LeaderboardPage() {
                       <span className="md:hidden text-[8px] uppercase font-bold text-[#8E9094] block mb-1">
                         Intent
                       </span>
-                      <p className="font-caveat text-lg text-[#4FD1C5] truncate">
+                      <Link
+                        href={`/pacts/${pact.id}`}
+                        className="font-caveat text-lg text-[#4FD1C5] truncate hover:text-[#F26B3A] transition-colors block"
+                      >
                         &quot;Hold ≥{" "}
                         {(pact.startBalance / 100_000_000).toFixed(2)} MOVE
                         until{" "}
                         {new Date(pact.deadline * 1000).toLocaleDateString()}
                         &quot;
-                      </p>
+                      </Link>
                     </div>
                     <div className="col-span-1">
                       <span className="md:hidden text-[8px] uppercase font-bold text-[#8E9094] block mb-1">

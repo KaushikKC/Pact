@@ -443,15 +443,26 @@ export default function PactDetailPage() {
                 Group Members ({pact.groupMembers?.length || 0}/{pact.maxGroupSize || 0})
               </h3>
               <div className="flex flex-wrap gap-2">
-                {pact.groupMembers?.map((member, i) => (
-                  <Link
-                    key={i}
-                    href={`/profile/${member}`}
-                    className="px-3 py-1 bg-[#15171C] border border-[#23262F] rounded text-sm hover:border-[#F26B3A] transition-colors"
-                  >
-                    {member.slice(0, 6)}...{member.slice(-4)}
-                  </Link>
-                ))}
+                {pact.groupMembers
+                  ?.filter((member) => member && member.startsWith("0x") && !member.includes(",") && !member.includes("%2C"))
+                  .map((member, i) => {
+                    // Ensure member is a single address (not concatenated)
+                    const cleanMember = member.trim();
+                    // Validate it's a proper address format
+                    if (!cleanMember.startsWith("0x") || cleanMember.length < 10) {
+                      return null;
+                    }
+                    return (
+                      <Link
+                        key={`${cleanMember}-${i}`}
+                        href={`/profile/${cleanMember}`}
+                        className="px-3 py-1 bg-[#15171C] border border-[#23262F] rounded text-sm hover:border-[#F26B3A] transition-colors"
+                      >
+                        {cleanMember.slice(0, 6)}...{cleanMember.slice(-4)}
+                      </Link>
+                    );
+                  })
+                  .filter((item) => item !== null)}
               </div>
             </section>
           )}

@@ -8,7 +8,6 @@ import { Card } from "../components/ui/card";
 import { useWallet } from "../contexts/WalletContext";
 import {
   fetchAllPacts,
-  fetchPact,
   submitResolvePactTransaction,
   getCurrentBalance,
 } from "../lib/pactTransactions";
@@ -80,9 +79,11 @@ function ResolvePactPageContent() {
         console.log(
           `[Resolve Page] Found ${activePactsData.length} resolvable pacts`
         );
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error("Error loading pacts:", err);
-        setError(err?.message || "Failed to load pacts");
+        const errorMessage =
+          err instanceof Error ? err.message : "Failed to load pacts";
+        setError(errorMessage);
       } finally {
         setIsLoading(false);
       }
@@ -120,7 +121,7 @@ function ResolvePactPageContent() {
         setCurrentBalance(balance);
         setMemberBalances([]);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Error loading balance:", err);
       setError("Failed to load current balance");
     }
@@ -141,7 +142,10 @@ function ResolvePactPageContent() {
 
     // Validate balances based on pact type
     if (selectedPact.isGroup) {
-      if (memberBalances.length === 0 || memberBalances.length !== (selectedPact.groupMembers?.length || 0)) {
+      if (
+        memberBalances.length === 0 ||
+        memberBalances.length !== (selectedPact.groupMembers?.length || 0)
+      ) {
         setError("Missing member balances for group pact");
         return;
       }
@@ -161,10 +165,17 @@ function ResolvePactPageContent() {
       const index = parseInt(parts[parts.length - 1], 10);
       const creatorAddress = parts.slice(0, -1).join("-");
 
-      const txHash = await submitResolvePactTransaction(
+      // Ensure we have valid balance values
+      const balanceValue: number | number[] = selectedPact.isGroup
+        ? memberBalances
+        : currentBalance !== null
+        ? currentBalance
+        : 0; // Fallback (should never happen due to validation above)
+
+      await submitResolvePactTransaction(
         creatorAddress,
         index,
-        selectedPact.isGroup ? memberBalances : currentBalance,
+        balanceValue,
         address,
         signAndSubmitTransaction,
         selectedPact.isGroup || false,
@@ -176,7 +187,7 @@ function ResolvePactPageContent() {
       let passed = false;
       if (selectedPact.isGroup && memberBalances.length > 0) {
         // All members must maintain their start balance
-        passed = memberBalances.every((balance, index) => {
+        passed = memberBalances.every((balance) => {
           // For group pacts, we'd need to check each member's start balance
           // For now, assume all members have the same start balance requirement
           return balance >= selectedPact.startBalance;
@@ -190,9 +201,11 @@ function ResolvePactPageContent() {
       setTimeout(() => {
         router.push("/pacts");
       }, 3000);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Error resolving pact:", err);
-      setError(err?.message || "Failed to resolve pact");
+      const errorMessage =
+        err instanceof Error ? err.message : "Failed to resolve pact";
+      setError(errorMessage);
       setResolving(false);
     }
   };

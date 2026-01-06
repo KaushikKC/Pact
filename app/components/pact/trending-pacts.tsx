@@ -44,7 +44,7 @@ export function TrendingPacts() {
             status: statusMap[pact.status] || "ACTIVE",
             creator: pact.creator,
             trendingScore: pact.trendingScore,
-          };
+          } as Pact;
         });
         setPacts(transformedPacts);
       } catch (error) {
