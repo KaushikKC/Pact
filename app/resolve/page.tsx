@@ -8,6 +8,7 @@ import { Card } from "../components/ui/card";
 import { useWallet } from "../contexts/WalletContext";
 import {
   fetchAllPacts,
+  fetchPact,
   submitResolvePactTransaction,
   getCurrentBalance,
 } from "../lib/pactTransactions";
@@ -37,6 +38,7 @@ function ResolvePactPageContent() {
   const [selectedPact, setSelectedPact] = useState<Pact | null>(null);
   const [currentBalance, setCurrentBalance] = useState<number | null>(null);
   const [memberBalances, setMemberBalances] = useState<number[]>([]);
+  const [loadingBalances, setLoadingBalances] = useState(false);
   const [resolving, setResolving] = useState(false);
   const [result, setResult] = useState<"SUCCESS" | "FAILURE" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -94,27 +96,176 @@ function ResolvePactPageContent() {
 
   // Load specific pact from URL param
   useEffect(() => {
-    const pactId = searchParams?.get("pact");
-    if (pactId && pacts.length > 0) {
-      const pact = pacts.find((p) => p.id === pactId);
-      if (pact) {
-        setSelectedPact(pact);
-        loadBalanceForPact(pact);
+    const loadPactFromUrl = async () => {
+      const pactId = searchParams?.get("pact");
+      if (!pactId) return;
+
+      // If pacts are already loaded, use them
+      if (pacts.length > 0) {
+        const pact = pacts.find((p) => p.id === pactId);
+        if (pact) {
+          // For group pacts, ensure we have group members loaded
+          if (
+            pact.isGroup &&
+            (!pact.groupMembers || pact.groupMembers.length === 0)
+          ) {
+            // Fetch full pact details including group members
+            try {
+              const parts = pactId.split("-");
+              const index = parseInt(parts[parts.length - 1], 10);
+              const creatorAddress = parts.slice(0, -1).join("-");
+              const fullPact = await fetchPact(creatorAddress, index);
+              if (fullPact) {
+                const updatedPact: Pact = {
+                  ...pact,
+                  isGroup: fullPact.isGroup || false,
+                  groupMembers: fullPact.groupMembers || [],
+                };
+                setSelectedPact(updatedPact);
+                loadBalanceForPact(updatedPact);
+              } else {
+                setSelectedPact(pact);
+                loadBalanceForPact(pact);
+              }
+            } catch (err) {
+              console.error("Error fetching full pact details:", err);
+              setSelectedPact(pact);
+              loadBalanceForPact(pact);
+            }
+          } else {
+            setSelectedPact(pact);
+            loadBalanceForPact(pact);
+          }
+        }
+      } else {
+        // If pacts not loaded yet, fetch this specific pact
+        try {
+          const parts = pactId.split("-");
+          const index = parseInt(parts[parts.length - 1], 10);
+          const creatorAddress = parts.slice(0, -1).join("-");
+          const fullPact = await fetchPact(creatorAddress, index);
+          if (fullPact) {
+            const statusMap: Record<number, PactStatus> = {
+              0: "ACTIVE",
+              1: "PASSED",
+              2: "FAILED",
+            };
+            const pactData: Pact = {
+              id: `${fullPact.creator}-${fullPact.index}`,
+              index: fullPact.index,
+              tokenAddress: fullPact.tokenAddress,
+              startBalance: fullPact.startBalance,
+              stakeAmount: fullPact.stakeAmount,
+              deadline: fullPact.deadline,
+              status: statusMap[fullPact.status] || "ACTIVE",
+              creator: fullPact.creator,
+              isGroup: fullPact.isGroup || false,
+              groupMembers: fullPact.groupMembers || [],
+            };
+            setSelectedPact(pactData);
+            loadBalanceForPact(pactData);
+          }
+        } catch (err) {
+          console.error("Error loading pact from URL:", err);
+        }
       }
-    }
+    };
+
+    loadPactFromUrl();
   }, [searchParams, pacts]);
 
   // Load current balance for selected pact
   const loadBalanceForPact = async (pact: Pact) => {
+    setLoadingBalances(true);
+    setError(null);
+
     try {
-      if (pact.isGroup && pact.groupMembers && pact.groupMembers.length > 0) {
-        // For group pacts, fetch balances for all members
-        const balances = await Promise.all(
-          pact.groupMembers.map((member) => getCurrentBalance(member))
-        );
-        setMemberBalances(balances);
-        setCurrentBalance(null); // Not used for group pacts
-        console.log("[Resolve Page] Group pact member balances:", balances);
+      if (pact.isGroup) {
+        // For group pacts, ensure we have group members
+        let members = pact.groupMembers || [];
+
+        // If no members loaded, fetch them
+        if (members.length === 0) {
+          console.log("[Resolve Page] Group members not loaded, fetching...");
+          try {
+            const fullPact = await fetchPact(pact.creator, pact.index);
+            if (
+              fullPact &&
+              fullPact.groupMembers &&
+              fullPact.groupMembers.length > 0
+            ) {
+              members = fullPact.groupMembers;
+              // Update pact with group members
+              setSelectedPact({
+                ...pact,
+                groupMembers: members,
+              });
+            }
+          } catch (err) {
+            console.error("Error fetching group members:", err);
+            setError("Failed to load group members");
+            setLoadingBalances(false);
+            return;
+          }
+        }
+
+        if (members.length > 0) {
+          // Filter out invalid members (concatenated addresses)
+          const validMembers = members.filter(
+            (m) =>
+              m &&
+              typeof m === "string" &&
+              m.startsWith("0x") &&
+              !m.includes(",") &&
+              !m.includes("%2C") &&
+              m.length > 10
+          );
+
+          if (validMembers.length === 0) {
+            console.warn("[Resolve Page] No valid group members found");
+            setError("No valid group members found");
+            setMemberBalances([]);
+            setCurrentBalance(null);
+            setLoadingBalances(false);
+            return;
+          }
+
+          console.log(
+            "[Resolve Page] Fetching balances for",
+            validMembers.length,
+            "group members:",
+            validMembers
+          );
+
+          // For group pacts, fetch balances for all members in parallel with timeout
+          const balancePromises = validMembers.map(async (member) => {
+            try {
+              // Add timeout to prevent hanging
+              const balancePromise = getCurrentBalance(member);
+              const timeoutPromise = new Promise<number>((resolve) => {
+                setTimeout(() => resolve(0), 10000); // 10 second timeout
+              });
+              return await Promise.race([balancePromise, timeoutPromise]);
+            } catch (err) {
+              console.error(`Error fetching balance for ${member}:`, err);
+              return 0; // Return 0 if balance fetch fails
+            }
+          });
+
+          const balances = await Promise.all(balancePromises);
+
+          setMemberBalances(balances);
+          setCurrentBalance(null); // Not used for group pacts
+          console.log(
+            "[Resolve Page] Group pact member balances loaded:",
+            balances
+          );
+        } else {
+          console.warn("[Resolve Page] No group members found for group pact");
+          setError("Group members not found");
+          setMemberBalances([]);
+          setCurrentBalance(null);
+        }
       } else {
         // For solo pacts, fetch balance for creator
         const balance = await getCurrentBalance(pact.creator);
@@ -123,7 +274,11 @@ function ResolvePactPageContent() {
       }
     } catch (err: unknown) {
       console.error("Error loading balance:", err);
-      setError("Failed to load current balance");
+      const errorMessage =
+        err instanceof Error ? err.message : "Failed to load current balance";
+      setError(errorMessage);
+    } finally {
+      setLoadingBalances(false);
     }
   };
 
@@ -347,6 +502,17 @@ function ResolvePactPageContent() {
                   <h4 className="text-[10px] uppercase font-bold tracking-widest text-[#8E9094] mb-4">
                     Resolution Details
                   </h4>
+                  {loadingBalances && (
+                    <div className="mb-4 p-3 bg-[#15171C] border border-[#23262F] rounded">
+                      <p className="text-xs text-[#8E9094]">
+                        {selectedPact.isGroup
+                          ? `Loading balances for ${
+                              selectedPact.groupMembers?.length || 0
+                            } group members...`
+                          : "Loading current balance..."}
+                      </p>
+                    </div>
+                  )}
                   <div className="space-y-4 text-sm text-[#8E9094]">
                     <div className="flex justify-between py-2 border-b border-[#23262F]">
                       <span>Minimum Balance (Committed):</span>
@@ -355,14 +521,54 @@ function ResolvePactPageContent() {
                         MOVE
                       </span>
                     </div>
-                    <div className="flex justify-between py-2 border-b border-[#23262F]">
-                      <span>Current Balance:</span>
-                      <span className="text-white">
-                        {currentBalance !== null
-                          ? `${(currentBalance / 100_000_000).toFixed(2)} MOVE`
-                          : "Loading..."}
-                      </span>
-                    </div>
+                    {selectedPact.isGroup ? (
+                      <div className="space-y-2">
+                        <div className="flex justify-between py-2 border-b border-[#23262F]">
+                          <span>Group Member Balances:</span>
+                          <span className="text-white">
+                            {loadingBalances
+                              ? "Loading..."
+                              : memberBalances.length > 0
+                              ? `${memberBalances.length} loaded`
+                              : "Not loaded"}
+                          </span>
+                        </div>
+                        {memberBalances.length > 0 && (
+                          <div className="space-y-1 max-h-40 overflow-y-auto">
+                            {selectedPact.groupMembers?.map((member, idx) => (
+                              <div
+                                key={member}
+                                className="flex justify-between py-1 text-xs"
+                              >
+                                <span className="font-mono">
+                                  {member.slice(0, 6)}...{member.slice(-4)}:
+                                </span>
+                                <span className="text-white">
+                                  {memberBalances[idx] !== undefined
+                                    ? `${(
+                                        memberBalances[idx] / 100_000_000
+                                      ).toFixed(2)} MOVE`
+                                    : "N/A"}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex justify-between py-2 border-b border-[#23262F]">
+                        <span>Current Balance:</span>
+                        <span className="text-white">
+                          {loadingBalances
+                            ? "Loading..."
+                            : currentBalance !== null
+                            ? `${(currentBalance / 100_000_000).toFixed(
+                                2
+                              )} MOVE`
+                            : "Not loaded"}
+                        </span>
+                      </div>
+                    )}
                     <div className="flex justify-between py-2 border-b border-[#23262F]">
                       <span>Stake Amount:</span>
                       <span className="text-white">
@@ -380,8 +586,20 @@ function ResolvePactPageContent() {
                     <div className="flex justify-between py-2">
                       <span>Resolution Rule:</span>
                       <span className="text-[#4FD1C5] font-bold">
-                        {currentBalance !== null &&
-                        selectedPact.startBalance !== null
+                        {loadingBalances
+                          ? "Loading..."
+                          : selectedPact.isGroup
+                          ? memberBalances.length > 0 &&
+                            selectedPact.groupMembers?.length ===
+                              memberBalances.length
+                            ? memberBalances.every(
+                                (bal) => bal >= selectedPact.startBalance
+                              )
+                              ? "PASS ✓ (All Balances ≥ Minimum)"
+                              : "FAIL ✗ (Some Balances < Minimum)"
+                            : "Pending"
+                          : currentBalance !== null &&
+                            selectedPact.startBalance !== null
                           ? currentBalance >= selectedPact.startBalance
                             ? "PASS ✓ (Balance ≥ Minimum)"
                             : "FAIL ✗ (Balance < Minimum)"
@@ -407,7 +625,14 @@ function ResolvePactPageContent() {
                   size="lg"
                   onClick={handleResolve}
                   disabled={
-                    resolving || currentBalance === null || !isConnected
+                    resolving ||
+                    loadingBalances ||
+                    !isConnected ||
+                    (selectedPact.isGroup
+                      ? memberBalances.length === 0 ||
+                        memberBalances.length !==
+                          (selectedPact.groupMembers?.length || 0)
+                      : currentBalance === null)
                   }
                 >
                   {resolving ? "Resolving Pact..." : "Execute Resolution"}
