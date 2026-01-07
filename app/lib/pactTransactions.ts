@@ -906,52 +906,74 @@ export const fetchAllPacts = async (): Promise<PactData[]> => {
     // Query events using REST API directly
     // Format: /accounts/{address}/events/{event_handle_struct}/{field_name}
     const eventHandleStruct = `${CONTRACT_ADDRESS}::pact::PactRegistry`;
-    const fieldName = "pact_created_events";
 
-    // Try multiple event URL formats in case one doesn't work
-    const eventUrl1 = `${fullnodeUrl}/accounts/${CONTRACT_ADDRESS}/events/${encodeURIComponent(
-      eventHandleStruct
-    )}/${encodeURIComponent(fieldName)}?limit=1000`;
-    const eventUrl2 = `${fullnodeUrl}/accounts/${CONTRACT_ADDRESS}/events/${encodeURIComponent(
-      `${eventHandleStruct}::${fieldName}`
-    )}?limit=1000`;
+    // Helper function to fetch events for a given field name
+    const fetchEvents = async (fieldName: string): Promise<unknown[]> => {
+      const eventUrl1 = `${fullnodeUrl}/accounts/${CONTRACT_ADDRESS}/events/${encodeURIComponent(
+        eventHandleStruct
+      )}/${encodeURIComponent(fieldName)}?limit=1000`;
+      const eventUrl2 = `${fullnodeUrl}/accounts/${CONTRACT_ADDRESS}/events/${encodeURIComponent(
+        `${eventHandleStruct}::${fieldName}`
+      )}?limit=1000`;
 
-    console.log("[Pact Transaction] Trying event URL format 1:", eventUrl1);
-    console.log("[Pact Transaction] Trying event URL format 2:", eventUrl2);
-
-    // Try first format
-    let response = await fetch(eventUrl1);
-
-    if (!response.ok) {
-      console.warn(
-        "[Pact Transaction] Event URL format 1 failed, trying format 2..."
+      console.log(
+        `[Pact Transaction] Fetching ${fieldName} - trying format 1:`,
+        eventUrl1
       );
-      // Try second format
-      response = await fetch(eventUrl2);
+
+      // Try first format
+      let response = await fetch(eventUrl1);
 
       if (!response.ok) {
-        const errorText = await response.text();
-        console.error("[Pact Transaction] Both event query formats failed:", {
-          format1: { status: response.status, statusText: response.statusText },
-          format2: { status: response.status, statusText: response.statusText },
-          error: errorText,
-        });
-        throw new Error(
-          `Failed to fetch events: ${response.status} ${response.statusText}. Event query may not be supported on this network.`
+        console.warn(
+          `[Pact Transaction] Event URL format 1 failed for ${fieldName}, trying format 2...`
         );
-      }
-    }
+        // Try second format
+        response = await fetch(eventUrl2);
 
-    const events = await response.json();
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error(
+            `[Pact Transaction] Both event query formats failed for ${fieldName}:`,
+            {
+              format1: {
+                status: response.status,
+                statusText: response.statusText,
+              },
+              format2: {
+                status: response.status,
+                statusText: response.statusText,
+              },
+              error: errorText,
+            }
+          );
+          // Return empty array instead of throwing - some events might not exist yet
+          return [];
+        }
+      }
+
+      const events = await response.json();
+      console.log(
+        `[Pact Transaction] Found ${events.length} ${fieldName} events`
+      );
+      return events;
+    };
+
+    // Fetch both solo pact and group pact creation events
+    const [soloPactEvents, groupPactEvents] = await Promise.all([
+      fetchEvents("pact_created_events"),
+      fetchEvents("group_pact_created_events"),
+    ]);
+
+    const allEvents = [...soloPactEvents, ...groupPactEvents];
     console.log(
-      `[Pact Transaction] Found ${events.length} pact creation events`,
-      events.length > 0 ? events[0] : "No events"
+      `[Pact Transaction] Found ${allEvents.length} total pact creation events (${soloPactEvents.length} solo + ${groupPactEvents.length} group)`
     );
 
-    // Extract unique creator addresses
+    // Extract unique creator addresses from both event types
     const creatorSet = new Set<string>();
 
-    events.forEach((event: unknown) => {
+    allEvents.forEach((event: unknown) => {
       // Event data structure: { data: { creator, pact_id, ... }, ... }
       const eventData = event as {
         data?: { creator?: string | number };
