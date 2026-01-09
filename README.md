@@ -10,6 +10,12 @@
 
 Pact provides a trustless mechanism for users to make verifiable commitments about their onchain token holdings. By staking native tokens (MOVE), users can create enforceable pacts that demonstrate their commitment to maintaining a position until a deadline.
 
+## Links
+
+- **Demo Video**: https://www.youtube.com/watch?v=HvvGqhEiTFY
+- **Live Demo**: https://pact-m1.vercel.app/
+
+
 ### Core Value Proposition
 
 - **DeFi-Focused**: Onchain position management with economic stakes
@@ -396,13 +402,6 @@ Contributions are welcome. Areas of particular interest:
 ## License
 
 MIT License - see LICENSE file for details
-
-## Links
-
-- **Movement Documentation**: https://docs.movementlabs.xyz
-- **Movement Testnet Explorer**: https://explorer.movementlabs.xyz
-- **Testnet Faucet**: https://faucet.movementlabs.xyz
-- **Movement GitHub**: https://github.com/movementlabsxyz
 
 ## Acknowledgments
 
